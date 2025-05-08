@@ -1,3 +1,24 @@
+"""
+1-Audio Compression Project: MP3 Encoder Implementation
+Objective: Implement a basic MP3-like audio compression system
+Steps:
+1. Audio Input Handling
+o Create a raw PCM audio file (e.g., WAV format). That contains noise
+and silence
+o Plot audio signal without noise
+o Plot audio signal that includes noise and silence
+2. Transform to Frequency Domain
+o Apply Short-Time Fourier Transform (STFT) or MDCT.
+o Split the audio into frequency bands.
+3. Quantization & Bit Allocation
+.
+4. Encoding
+o Use Huffman or run-length encoding to compress quantized values.
+5. Testing & Evaluation
+o Compare original vs. decompressed audio.
+o Use Signal-to-Noise Ratio (SNR)
+"""
+
 import numpy as np
 import soundfile as sf
 import librosa

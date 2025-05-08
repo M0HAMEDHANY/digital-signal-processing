@@ -1,3 +1,30 @@
+"""
+2-Video Compression Project:
+Objective: Implement a basic video compression.
+Steps:
+1. Video Input Handling
+o Create video frame-by-frame
+o Convert frames to YUV color space.
+2. Frame Type Decision
+o Choose I-frames and P-frames (e.g., every 10th frame is an I-frame).
+3. Intra-frame Compression (I-frame)
+o Apply DCT on 8x8 blocks.
+o Quantize DCT coefficients.
+o Apply zig-zag scan and run-length encoding.
+4. Inter-frame Compression (P-frame)
+o Perform motion estimation (e.g., block matching).
+o Compute motion vectors.
+o Encode motion vectors and residuals.
+5. Entropy Coding
+o Use Huffman or Arithmetic Coding on motion vectors and residuals.
+6. Bitstream Formation
+o Package frames into a bitstream with headers and frame type indicators.
+7. Testing & Evaluation
+o Compare original and decoded video.
+o Measure compression ratio and PSNR (Peak Signal-to-Noise Ratio).
+
+"""
+
 import cv2
 import numpy as np
 from scipy.fftpack import dct, idct
@@ -104,4 +131,3 @@ class VideoProcessor:
         for frame in self.decoded:
             writer.write(frame)
         writer.release()
-        
