@@ -54,7 +54,7 @@ class MainWindow(QMainWindow):
         btn_play_o.clicked.connect(self.ap.play_original)
         btn_play_p = QPushButton("Play Processed")
         btn_play_p.clicked.connect(self.play_last)
-        btn_save = QPushButton("Save WAV")
+        btn_save = QPushButton("Save")
         btn_save.clicked.connect(self.save_audio)
 
         self.winSlider = QSlider(Qt.Horizontal)
@@ -219,7 +219,7 @@ class MainWindow(QMainWindow):
             self.ap.play(self.last_audio)
 
     def save_audio(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Save WAV", "", "WAV (*.wav)")
+        path, _ = QFileDialog.getSaveFileName(self, "Save MP3", "", "MP3 (*.mp3)")
         if not path:
             return
         try:

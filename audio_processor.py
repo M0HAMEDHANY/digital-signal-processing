@@ -1,13 +1,11 @@
-# audio_processor.py
-
 import numpy as np
 import soundfile as sf
 import librosa
 import pyaudio
 import threading
 from scipy.signal import stft, istft
-import huffman
-from bitarray import bitarray
+import zlib
+import pickle
 
 
 class AudioProcessor:
@@ -22,9 +20,7 @@ class AudioProcessor:
         self._play_thread = None
 
         self.metadata = {}
-        self.compressed_data = None  # binary
-        self.huff_codebook = None
-        self.mag_q = None
+        self.compressed_data = None
         self.phase = None
         self.win_size = None
         self.bits = None
@@ -42,7 +38,7 @@ class AudioProcessor:
                 ) from e
             data = y.T if y.ndim > 1 else y
 
-        # Auto‐mono for simplicity
+        # Convert to mono if stereo
         if data.ndim > 1:
             data = np.mean(data, axis=1)
 
@@ -52,10 +48,6 @@ class AudioProcessor:
         self.time = np.linspace(0, length / sr, num=length)
 
     def denoise(self, threshold: float) -> np.ndarray:
-        """
-        Zero‐out any sample whose absolute value is below `threshold`.
-        Returns the cleaned signal.
-        """
         if self.signal is None:
             raise ValueError("Load audio first")
         clean = self.signal.copy()
@@ -67,36 +59,32 @@ class AudioProcessor:
         self.bits = bits
         self.metadata["method"] = method
 
-        # Mono only
+        # STFT
         f, t, Z = stft(self.signal, fs=self.fs, nperseg=win_size)
         mag = np.abs(Z)
         self.phase = np.angle(Z)
 
-        self.mag_q = np.round(mag / mag.max() * (2**bits - 1)).astype(int)
-        flat = self.mag_q.flatten().tolist()
-        unique, counts = np.unique(flat, return_counts=True)
-        self.huff_codebook = huffman.codebook(list(zip(unique, counts)))
+        # Quantize magnitude
+        mag_q = np.round(mag / mag.max() * (2**bits - 1)).astype(np.uint8)
 
-        # Pack into real binary stream
-        ba = bitarray()
-        for symbol in flat:
-            ba.extend(self.huff_codebook[symbol])
-        self.compressed_data = ba
+        # Serialize + compress using zlib
+        serialized = pickle.dumps(mag_q)
+        self.compressed_data = zlib.compress(serialized, level=9)
 
-        # Reconstruction
-        mag_d = self.mag_q / (2**bits - 1) * mag.max()
-        Z_rec = mag_d * np.exp(1j * self.phase)
-        _, x_rec = istft(Z_rec, fs=self.fs, nperseg=win_size)
-        self.reconstructed = x_rec.astype(np.float32)
-
-        # Metadata
+        # Save for metadata
         self.metadata.update(
             {
-                "original_shape": self.mag_q.shape,
+                "original_shape": mag_q.shape,
                 "max_value": float(mag.max()),
                 "fs": self.fs,
             }
         )
+
+        # Reconstruct audio
+        mag_d = mag_q / (2**bits - 1) * mag.max()
+        Z_rec = mag_d * np.exp(1j * self.phase)
+        _, x_rec = istft(Z_rec, fs=self.fs, nperseg=win_size)
+        self.reconstructed = x_rec.astype(np.float32)
 
         # SNR
         N = min(len(self.signal), len(self.reconstructed))
@@ -139,9 +127,7 @@ class AudioProcessor:
             raise ValueError("Run compress() first")
         np.savez(
             path,
-            compressed_bytes=self.compressed_data.tobytes(),
-            huffman_codebook=self.huff_codebook,
-            mag_q=self.mag_q,
+            compressed_data=self.compressed_data,
             phase=self.phase,
             win_size=self.win_size,
             bits=self.bits,
@@ -151,18 +137,18 @@ class AudioProcessor:
 
     def load_bitstream(self, path):
         data = np.load(path, allow_pickle=True)
-        raw = data["compressed_bytes"].item()
-        self.compressed_data = bitarray()
-        self.compressed_data.frombytes(raw)
-        self.huff_codebook = data["huffman_codebook"].item()
-        self.mag_q = data["mag_q"]
+        self.compressed_data = data["compressed_data"].item()
         self.phase = data["phase"]
         self.win_size = int(data["win_size"])
         self.bits = int(data["bits"])
         self.fs = int(data["fs"])
         self.metadata = data["metadata"].item()
 
-        mag_d = self.mag_q / (2**self.bits - 1) * self.metadata["max_value"]
+        # Decompress + deserialize
+        mag_q = pickle.loads(zlib.decompress(self.compressed_data))
+
+        # Reconstruct
+        mag_d = mag_q / (2**self.bits - 1) * self.metadata["max_value"]
         Z_rec = mag_d * np.exp(1j * self.phase)
         _, x_rec = istft(Z_rec, fs=self.fs, nperseg=self.win_size)
         self.reconstructed = x_rec.astype(np.float32)
