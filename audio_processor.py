@@ -6,7 +6,7 @@ import threading
 from scipy.signal import stft, istft
 import zlib
 import pickle
-
+import os
 
 class AudioProcessor:
     def __init__(self):
@@ -15,7 +15,8 @@ class AudioProcessor:
         self.fs = None
         self.reconstructed = None
         self.snr = None
-
+        self.filename = None 
+        
         self._pa = pyaudio.PyAudio()
         self._play_thread = None
 
@@ -37,7 +38,7 @@ class AudioProcessor:
                     "Use WAV/FLAC/MP3 or install ffmpeg for M4A support."
                 ) from e
             data = y.T if y.ndim > 1 else y
-
+        self.filename = os.path.basename(filepath)
         # Convert to mono if stereo
         if data.ndim > 1:
             data = np.mean(data, axis=1)
@@ -47,11 +48,50 @@ class AudioProcessor:
         length = data.shape[0]
         self.time = np.linspace(0, length / sr, num=length)
 
+    def stop(self):
+        if self._play_thread is not None:
+            # Create a signal to stop the stream
+            self._stop_signal = True
+            
+            # Wait for thread to finish
+            self._play_thread.join(timeout=0.5)  # Add timeout to prevent hanging
+            self._play_thread = None
+        
+            
     def denoise(self, threshold: float) -> np.ndarray:
+        print("Denoising...")
         if self.signal is None:
             raise ValueError("Load audio first")
-        clean = self.signal.copy()
-        clean[np.abs(clean) < threshold] = 0.0
+        
+        # Method 1: Simple threshold-based denoising (current implementation)
+        # clean = self.signal.copy()
+        # clean[np.abs(clean) < threshold] = 0.0
+        
+        # Method 2: Spectral subtraction denoising
+        # Apply STFT
+        n_fft = 2048
+        hop_length = n_fft // 4
+        
+        # Compute spectrogram
+        S = librosa.stft(self.signal, n_fft=n_fft, hop_length=hop_length)
+        
+        # Get magnitude and phase
+        mag = np.abs(S)
+        phase = np.angle(S)
+        
+        # Estimate noise floor (assuming first few frames are noise)
+        noise_frames = int(len(self.signal) * 0.1 / hop_length)  # use first 10% of signal
+        noise_frames = max(5, min(noise_frames, 20))  # at least 5, at most 20 frames
+        noise_estimate = np.mean(mag[:, :noise_frames], axis=1)
+        
+        # Apply spectral subtraction
+        gain = np.maximum(0, 1 - threshold * noise_estimate[:, np.newaxis] / (mag + 1e-10))
+        mag_clean = mag * gain
+        
+        # Reconstruct signal
+        S_clean = mag_clean * np.exp(1j * phase)
+        clean = librosa.istft(S_clean, hop_length=hop_length, length=len(self.signal))
+        self.reconstructed = clean.astype(np.float32)
         return clean
 
     def compress(self, win_size, bits, method):
@@ -96,11 +136,22 @@ class AudioProcessor:
         self.snr = 10 * np.log10(p_sig / p_noise) if p_noise > 0 else float("inf")
 
     def play(self, data):
+        self._stop_signal = False  # Reset stop signal
+        
         def _worker():
             stream = self._pa.open(
                 format=pyaudio.paFloat32, channels=1, rate=self.fs, output=True
             )
-            stream.write(data.tobytes())
+            
+            # Process data in chunks to allow interruption
+            chunk_size = 1024
+            data_bytes = data.tobytes()
+            for i in range(0, len(data_bytes), chunk_size * 4):  # *4 because float32 = 4 bytes
+                if self._stop_signal:
+                    break
+                chunk = data_bytes[i:i + chunk_size * 4]
+                stream.write(chunk)
+                
             stream.stop_stream()
             stream.close()
 
@@ -120,8 +171,20 @@ class AudioProcessor:
     def save_wav(self, path):
         if self.reconstructed is None:
             raise ValueError("Nothing to save")
+        
+        # If path is a directory, use original filename + "_constructed"
+        import os
+        if os.path.isdir(path):
+            if self.filename:
+                base, ext = os.path.splitext(self.filename)
+                new_path = os.path.join(path, f"{base}_constructed{ext}")
+                sf.write(new_path, self.reconstructed, self.fs)
+                return new_path
+        
+        # Otherwise use provided path
         sf.write(path, self.reconstructed, self.fs)
-
+        return path
+    
     def save_bitstream(self, path):
         if self.compressed_data is None:
             raise ValueError("Run compress() first")

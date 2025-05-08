@@ -29,7 +29,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Multimedia Compression Suite")
-        self.resize(1000, 700)
+        self.resize(1000, 800)
 
         # Track last processed audio buffer (denoised or reconstructed)
         self.last_audio = None
@@ -54,8 +54,11 @@ class MainWindow(QMainWindow):
         btn_play_o.clicked.connect(self.ap.play_original)
         btn_play_p = QPushButton("Play Processed")
         btn_play_p.clicked.connect(self.play_last)
+        btn_stop = QPushButton("Stop")
+        btn_stop.clicked.connect(self.stop_audio)
         btn_save = QPushButton("Save")
         btn_save.clicked.connect(self.save_audio)
+        
 
         self.winSlider = QSlider(Qt.Horizontal)
         self.winSlider.setRange(256, 4096)
@@ -66,9 +69,10 @@ class MainWindow(QMainWindow):
         self.encCombo.addItems(["Huffman"])
 
         # Noise threshold controls
+        # Noise threshold controls
         self.noiseSlider = QSlider(Qt.Horizontal)
-        self.noiseSlider.setRange(0, 100)
-        self.noiseSlider.setValue(5)
+        self.noiseSlider.setRange(100, 1000)  # Lower min value, reasonable max
+        self.noiseSlider.setValue(10)     # Start at 10%
         btn_clean = QPushButton("Plot Clean Signal")
         btn_clean.clicked.connect(self.plot_clean)
 
@@ -104,7 +108,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.procCan)
 
         hl3 = QHBoxLayout()
-        for wgt in (btn_play_o, btn_play_p, btn_save):
+        for wgt in (btn_play_o, btn_play_p, btn_save, btn_stop):
             hl3.addWidget(wgt)
         layout.addLayout(hl3)
 
@@ -176,19 +180,31 @@ class MainWindow(QMainWindow):
             self.ap.load(path)
             self.last_audio = None
             self._plot(self.origCan, self.ap.time, self.ap.signal, "Original Signal")
+            
+            # Update window title with filename
+            import os
+            filename = os.path.basename(path)
+            self.setWindowTitle(f"Multimedia Compression Suite - {filename}")
+            
         except Exception as e:
             QMessageBox.critical(self, "Load Error", str(e))
 
     def plot_clean(self):
         try:
-            pct = self.noiseSlider.value() / 100.0
-            threshold = pct * np.max(np.abs(self.ap.signal))
+            # pct = self.noiseSlider.value() / 100.0
+            
+            # Better mapping function - more aggressive at higher values
+            threshold  = self.noiseSlider.value()
+            
             clean = self.ap.denoise(threshold)
             self.last_audio = clean.astype(np.float32)
             self._plot(self.cleanCan, self.ap.time, clean, "Cleaned Signal")
+            
+            # Show threshold value for debugging
+            print(f"Applied threshold: {threshold:.6f}")
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
-
+            
     def run_audio(self):
         try:
             self.ap.compress(
@@ -209,6 +225,14 @@ class MainWindow(QMainWindow):
             self.ap.reconstructed,
             f"Reconstructed (SNR: {self.ap.snr:.2f} dB)",
         )
+    def stop_audio(self):
+        if self.ap is not None  :
+            self.ap.stop()
+            # self.ap.player.stop()
+            # self.ap.player = None
+        else:
+            QMessageBox.warning(self, "No Audio", "No audio is currently playing.")
+                        
 
     def play_last(self):
         if self.last_audio is None:
@@ -219,18 +243,34 @@ class MainWindow(QMainWindow):
             self.ap.play(self.last_audio)
 
     def save_audio(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Save MP3", "", "MP3 (*.mp3)")
-        if not path:
-            return
-        try:
-            # always save the reconstructed version
-            self.ap.save_wav(path)
-            QMessageBox.information(
-                self, "Saved", f"Reconstructed audio saved to:\n{path}"
-            )
-        except Exception as e:
-            QMessageBox.critical(self, "Save Error", str(e))
-
+        # Check` if we have original filename
+        if hasattr(self.ap, 'filename') and self.ap.filename:
+            # Suggest a directory for saving instead of a filename
+            path = QFileDialog.getExistingDirectory(self, "Select Directory to Save")
+            if not path:
+                return
+            
+            try:
+                # Use the enhanced save_wav that handles original filename
+                saved_path = self.ap.save_wav(path)
+                QMessageBox.information(
+                    self, "Saved", f"Reconstructed audio saved to:\n{saved_path}"
+                )
+            except Exception as e:
+                QMessageBox.critical(self, "Save Error", str(e))
+        else:
+            # Fall back to previous behavior if no original filename
+            path, _ = QFileDialog.getSaveFileName(self, "Save Audio", "", "WAV (*.wav)")
+            if not path:
+                return
+            try:
+                self.ap.save_wav(path)
+                QMessageBox.information(
+                    self, "Saved", f"Reconstructed audio saved to:\n{path}"
+                )
+            except Exception as e:
+                QMessageBox.critical(self, "Save Error", str(e))
+        
     def _plot(self, canvas, x, y, title):
         canvas.figure.clf()
         ax = canvas.figure.add_subplot(111)
