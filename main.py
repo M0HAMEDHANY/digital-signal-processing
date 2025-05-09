@@ -1,3 +1,4 @@
+import os
 import sys
 import numpy as np
 import cv2  # أضف هذا السطر
@@ -24,6 +25,7 @@ from matplotlib.figure import Figure
 
 from audio_processor import AudioProcessor
 from video_processor import VideoProcessor
+from create_video import CreateVideo
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -72,7 +74,7 @@ class MainWindow(QMainWindow):
         self.noiseSlider.setRange(100, 1000)
         self.noiseSlider.setValue(10)
         btn_clean = QPushButton("Plot Clean Signal")
-        btn_clean.clicked.connect(self.plot_clean)
+        #btn_clean.clicked.connect(self.plot_clean) 
 
         # Canvases
         self.origCan = FigureCanvas(Figure(figsize=(5, 2)))
@@ -129,6 +131,8 @@ class MainWindow(QMainWindow):
         btn_save_vid.clicked.connect(self.save_video)
         btn_save_bs = QPushButton("Save Bitstream")
         btn_save_bs.clicked.connect(self.save_bs)
+        btn_create_vid = QPushButton("Create Video from Frames")
+        btn_create_vid.clicked.connect(self.create_from_frames)
 
         self.gopSlider = QSlider(Qt.Horizontal)
         self.gopSlider.setRange(1, 30)
@@ -174,8 +178,9 @@ class MainWindow(QMainWindow):
 
         # Preview buttons layout
         hl2 = QHBoxLayout()
-        hl2.addWidget(btn_play_o)
+        hl2.addWidget(btn_play_o) 
         hl2.addWidget(btn_play_p)
+        hl2.addWidget(btn_create_vid) 
         layout.addLayout(hl2)
 
         return w
@@ -294,7 +299,6 @@ class MainWindow(QMainWindow):
         try:
             self.vp.load(path)
             self.frameIdx = 0
-            import os
             filename = os.path.basename(path)
             self.setWindowTitle(f"Multimedia Compression Suite - Video: {filename}")
             QMessageBox.information(self, "Loaded", f"{len(self.vp.frames)} frames")
@@ -368,6 +372,34 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Saved", path)
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
+
+    def create_from_frames(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Frame Folder")
+        
+        if not folder:
+            return
+
+        # Debugging: Print the selected folder path
+        print(f"Selected folder: {folder}")
+        
+        if not os.path.exists(folder):
+            QMessageBox.critical(self, "Error", f"Path '{folder}' does not exist.")
+            return
+
+        try:
+            creator = CreateVideo()
+            creator.create_video(folder)
+            
+            save_path, _ = QFileDialog.getSaveFileName(self, "Save Video As", "Video.mp4", "MP4 Video (*.mp4)")
+            if not save_path:
+                return
+
+            creator.save_video(save_path)
+            QMessageBox.information(self, "Success", f"Video created and saved as:\n{save_path}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Video Creation Failed", str(e))
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

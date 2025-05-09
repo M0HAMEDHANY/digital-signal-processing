@@ -56,6 +56,8 @@ class VideoProcessor:
             ret, frame = cap.read()
             if not ret:
                 break
+            if frame is None:
+                continue  # Skip invalid frames
             self.frames.append(frame)
         
         if not self.frames:
