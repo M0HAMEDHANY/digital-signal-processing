@@ -6,8 +6,7 @@ Steps:
 1. Video Input Handling ===============>> Done
 o Create video frame-by-frame
 o Convert frames to YUV color space.
-
-# Y: Brightness, U: Blue - Brightness, V: Red - Brightness -> !!!!!!!!IMPORTANT!!!!!!!!!!
+ Y: Brightness, U: Blue - Brightness, V: Red - Brightness -> !!!!!!!!IMPORTANT!!!!!!!!!!
 
 2. Frame Type Decision ===============> Done
 o Choose I-frames and P-frames (e.g., every 10th frame is an I-frame).
@@ -116,7 +115,7 @@ class VideoProcessor:
 
             # merge and convert back
             merged = cv2.merge([np.clip(c, 0, 255).astype(np.uint8) for c in rec_ch])
-            bgr = cv2.cvtColor(merged, cv2.COLOR_YUV2BGR_I420)
+            bgr = cv2.cvtColor(merged, cv2.COLOR_YUV2BGR)
             self.decoded.append(bgr)
             prev_dec = merged
             total_original += frame.size
