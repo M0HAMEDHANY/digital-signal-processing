@@ -1,7 +1,7 @@
-# main.py
-
 import sys
 import numpy as np
+import cv2  # أضف هذا السطر
+
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
     QTabWidget,
     QMessageBox,
     QHBoxLayout,
+    QGroupBox,
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
@@ -22,8 +23,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 from audio_processor import AudioProcessor
-from video_processor import VideoProcessor  # unchanged
-
+from video_processor import VideoProcessor
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -59,7 +59,6 @@ class MainWindow(QMainWindow):
         btn_save = QPushButton("Save")
         btn_save.clicked.connect(self.save_audio)
         
-
         self.winSlider = QSlider(Qt.Horizontal)
         self.winSlider.setRange(256, 4096)
         self.winSlider.setValue(1024)
@@ -69,16 +68,15 @@ class MainWindow(QMainWindow):
         self.encCombo.addItems(["Huffman"])
 
         # Noise threshold controls
-        # Noise threshold controls
         self.noiseSlider = QSlider(Qt.Horizontal)
-        self.noiseSlider.setRange(100, 1000)  # Lower min value, reasonable max
-        self.noiseSlider.setValue(10)     # Start at 10%
+        self.noiseSlider.setRange(100, 1000)
+        self.noiseSlider.setValue(10)
         btn_clean = QPushButton("Plot Clean Signal")
         btn_clean.clicked.connect(self.plot_clean)
 
         # Canvases
         self.origCan = FigureCanvas(Figure(figsize=(5, 2)))
-        self.cleanCan = FigureCanvas(Figure(figsize=(5, 2)))  # for denoised
+        self.cleanCan = FigureCanvas(Figure(figsize=(5, 2)))
         self.procCan = FigureCanvas(Figure(figsize=(5, 2)))
 
         # Layout assembly
@@ -115,7 +113,6 @@ class MainWindow(QMainWindow):
         return w
 
     def build_video_tab(self):
-        # unchanged
         w = QWidget()
         layout = QVBoxLayout(w)
         self.vp = VideoProcessor()
@@ -137,10 +134,12 @@ class MainWindow(QMainWindow):
         self.gopSlider.setRange(1, 30)
         self.gopSlider.setValue(10)
         self.qSlider = QSlider(Qt.Horizontal)
-        self.qSlider.setRange(1, 50)
-        self.qSlider.setValue(10)
+        self.qSlider.setRange(1, 100)
+        self.qSlider.setValue(50)
+        self.qValueLabel = QLabel("50")  # Label to display current Q value
+        self.qSlider.valueChanged.connect(lambda: self.qValueLabel.setText(str(self.qSlider.value())))
         self.encVCombo = QComboBox()
-        self.encVCombo.addItems(["Huffman", "Arithmetic"])
+        self.encVCombo.addItems(["Huffman", "Arithmetic", "Intra"])
 
         self.frameLbl = QLabel()
         self.frameLbl.setFixedHeight(360)
@@ -148,6 +147,7 @@ class MainWindow(QMainWindow):
         self.timer = QTimer()
         self.timer.timeout.connect(self._show_frame)
 
+        # Control layout
         hl = QHBoxLayout()
         for wgt in (
             btn_load,
@@ -156,16 +156,28 @@ class MainWindow(QMainWindow):
             self.gopSlider,
             QLabel("Q:"),
             self.qSlider,
+            self.qValueLabel,
             QLabel("Enc:"),
             self.encVCombo,
         ):
             hl.addWidget(wgt)
         layout.addLayout(hl)
         layout.addWidget(self.frameLbl)
+
+        # Save Options Group Box
+        save_group = QGroupBox("Save Options")
+        save_layout = QHBoxLayout()
+        save_layout.addWidget(btn_save_vid)
+        save_layout.addWidget(btn_save_bs)
+        save_group.setLayout(save_layout)
+        layout.addWidget(save_group)
+
+        # Preview buttons layout
         hl2 = QHBoxLayout()
-        for wgt in (btn_play_o, btn_play_p, btn_save_vid, btn_save_bs):
-            hl2.addWidget(wgt)
+        hl2.addWidget(btn_play_o)
+        hl2.addWidget(btn_play_p)
         layout.addLayout(hl2)
+
         return w
 
     # --- Audio methods ---
@@ -181,27 +193,19 @@ class MainWindow(QMainWindow):
             self.last_audio = None
             self._plot(self.origCan, self.ap.time, self.ap.signal, "Original Signal")
             
-            # Update window title with filename
             import os
             filename = os.path.basename(path)
-            self.setWindowTitle(f"Multimedia Compression Suite - {filename}")
+            self.setWindowTitle(f"Multimedia Compression Suite - Audio: {filename}")
             
         except Exception as e:
             QMessageBox.critical(self, "Load Error", str(e))
 
     def plot_clean(self):
         try:
-            # pct = self.noiseSlider.value() / 100.0
-            
-            # Better mapping function - more aggressive at higher values
-            threshold  = self.noiseSlider.value()
-            
+            threshold = self.noiseSlider.value()
             clean = self.ap.denoise(threshold)
             self.last_audio = clean.astype(np.float32)
             self._plot(self.cleanCan, self.ap.time, clean, "Cleaned Signal")
-            
-            # Show threshold value for debugging
-            # print(f"Applied threshold: {threshold:.6f}")
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
             
@@ -215,7 +219,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             return QMessageBox.critical(self, "Compression Error", str(e))
 
-        # rebuild time axis
         L = len(self.ap.reconstructed)
         self.ap.time = np.linspace(0, L / self.ap.fs, num=L)
         self.last_audio = self.ap.reconstructed
@@ -225,14 +228,12 @@ class MainWindow(QMainWindow):
             self.ap.reconstructed,
             f"Reconstructed (SNR: {self.ap.snr:.2f} dB)",
         )
+
     def stop_audio(self):
-        if self.ap is not None  :
+        if self.ap is not None:
             self.ap.stop()
-            # self.ap.player.stop()
-            # self.ap.player = None
         else:
             QMessageBox.warning(self, "No Audio", "No audio is currently playing.")
-                        
 
     def play_last(self):
         if self.last_audio is None:
@@ -243,15 +244,11 @@ class MainWindow(QMainWindow):
             self.ap.play(self.last_audio)
 
     def save_audio(self):
-        # Check` if we have original filename
         if hasattr(self.ap, 'filename') and self.ap.filename:
-            # Suggest a directory for saving instead of a filename
             path = QFileDialog.getExistingDirectory(self, "Select Directory to Save")
             if not path:
                 return
-            
             try:
-                # Use the enhanced save_wav that handles original filename
                 saved_path = self.ap.save_wav(path)
                 QMessageBox.information(
                     self, "Saved", f"Reconstructed audio saved to:\n{saved_path}"
@@ -259,7 +256,6 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Save Error", str(e))
         else:
-            # Fall back to previous behavior if no original filename
             path, _ = QFileDialog.getSaveFileName(self, "Save Audio", "", "WAV (*.wav)")
             if not path:
                 return
@@ -287,7 +283,7 @@ class MainWindow(QMainWindow):
             ax.legend()
         canvas.draw()
 
-    # --- Video methods (unchanged) ---
+    # --- Video methods ---
 
     def load_video(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -298,6 +294,9 @@ class MainWindow(QMainWindow):
         try:
             self.vp.load(path)
             self.frameIdx = 0
+            import os
+            filename = os.path.basename(path)
+            self.setWindowTitle(f"Multimedia Compression Suite - Video: {filename}")
             QMessageBox.information(self, "Loaded", f"{len(self.vp.frames)} frames")
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
@@ -316,20 +315,27 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", str(e))
 
     def _show_frame(self):
-        lst = self._play_list
-        if self.frameIdx >= len(lst):
+        try:
+            lst = self._play_list
+            if self.frameIdx >= len(lst):
+                self.timer.stop()
+                return
+            fr = lst[self.frameIdx]
+            h, w, _ = fr.shape if len(fr.shape) == 3 else (fr.shape[0], fr.shape[1], 1)
+            if len(fr.shape) == 2:  # Grayscale frame
+                fr = cv2.cvtColor(fr, cv2.COLOR_GRAY2BGR)
+            img = QImage(fr.data, w, h, 3 * w, QImage.Format_BGR888)
+            self.frameLbl.setPixmap(
+                QPixmap.fromImage(img).scaled(self.frameLbl.size(), Qt.KeepAspectRatio)
+            )
+            self.frameIdx += 1
+        except Exception as e:
             self.timer.stop()
-            return
-        fr = lst[self.frameIdx]
-        h, w, _ = fr.shape
-        img = QImage(fr.data, w, h, 3 * w, QImage.Format_BGR888)
-        self.frameLbl.setPixmap(
-            QPixmap.fromImage(img).scaled(self.frameLbl.size(), Qt.KeepAspectRatio)
-        )
-        self.frameIdx += 1
+            QMessageBox.critical(self, "Playback Error", f"Error displaying frame: {str(e)}")
 
     def preview_original(self):
         if not self.vp.frames:
+            QMessageBox.warning(self, "No Video", "Load a video first.")
             return
         self._play_list = self.vp.frames
         self.frameIdx = 0
@@ -337,6 +343,7 @@ class MainWindow(QMainWindow):
 
     def preview_decoded(self):
         if not self.vp.decoded:
+            QMessageBox.warning(self, "No Decoded Video", "Run compression first.")
             return
         self._play_list = self.vp.decoded
         self.frameIdx = 0
@@ -361,7 +368,6 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Saved", path)
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
