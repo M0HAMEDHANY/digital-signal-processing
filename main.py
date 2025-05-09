@@ -201,7 +201,7 @@ class MainWindow(QMainWindow):
             self._plot(self.cleanCan, self.ap.time, clean, "Cleaned Signal")
             
             # Show threshold value for debugging
-            print(f"Applied threshold: {threshold:.6f}")
+            # print(f"Applied threshold: {threshold:.6f}")
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
             

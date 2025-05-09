@@ -80,7 +80,7 @@ class AudioProcessor:
         
             
     def denoise(self, threshold: float) -> np.ndarray:
-        print("Denoising...")
+        # print("Denoising...")
         if self.signal is None:
             raise ValueError("Load audio first")
         
