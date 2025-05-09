@@ -72,8 +72,86 @@ class VideoProcessor:
         
         if encoding_method.lower() == "intra":
             self.compress_intra(gop, q)
+        elif encoding_method.lower() == "pframe":
+            self.compress_inter(gop, q)
         else:
             self.compress_quantization(gop, q)
+
+    def compress_inter(self, gop=10, q=50, block_size=16, search_range=8):
+        """Compress video using I-frames and P-frames (inter-frame prediction)."""
+        frames = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32) for f in self.frames]
+        compressed_frames = []
+        frame_types = []
+        motion_vectors = []
+        for idx, frame in enumerate(frames):
+            if idx % gop == 0:
+                # I-frame: use intra compression
+                compressed_blocks = []
+                for i in range(0, frame.shape[0], 8):
+                    for j in range(0, frame.shape[1], 8):
+                        block = frame[i:i+8, j:j+8] - 128
+                        dct_block = cv2.dct(block)
+                        quantized = np.round(dct_block / q).astype(np.int16)
+                        zigzag = self.zigzag_scan(quantized)
+                        rle = self.run_length_encode(zigzag)
+                        compressed_blocks.append(rle)
+                compressed_frames.append(compressed_blocks)
+                frame_types.append('I')
+                motion_vectors.append(None)
+                ref_frame = frame.copy()
+            else:
+                # P-frame: block matching
+                mv_frame = []
+                residual_blocks = []
+                for i in range(0, frame.shape[0], block_size):
+                    for j in range(0, frame.shape[1], block_size):
+                        block = frame[i:i+block_size, j:j+block_size]
+                        best_mv = (0, 0)
+                        min_error = float('inf')
+                        for dx in range(-search_range, search_range+1):
+                            for dy in range(-search_range, search_range+1):
+                                ref_i = i + dx
+                                ref_j = j + dy
+                                if (0 <= ref_i < frame.shape[0]-block_size+1 and
+                                    0 <= ref_j < frame.shape[1]-block_size+1):
+                                    ref_block = ref_frame[ref_i:ref_i+block_size, ref_j:ref_j+block_size]
+                                    error = np.sum(np.abs(block - ref_block))
+                                    if error < min_error:
+                                        min_error = error
+                                        best_mv = (dx, dy)
+                        mv_frame.append(best_mv)
+                        ref_i = i + best_mv[0]
+                        ref_j = j + best_mv[1]
+                        ref_block = ref_frame[ref_i:ref_i+block_size, ref_j:ref_j+block_size]
+                        residual = block - ref_block
+                        # DCT, quantize, zigzag, RLE
+                        for bi in range(0, block_size, 8):
+                            for bj in range(0, block_size, 8):
+                                subblock = residual[bi:bi+8, bj:bj+8]
+                                dct_block = cv2.dct(subblock)
+                                quantized = np.round(dct_block / q).astype(np.int16)
+                                zigzag = self.zigzag_scan(quantized)
+                                rle = self.run_length_encode(zigzag)
+                                residual_blocks.append(rle)
+                compressed_frames.append(residual_blocks)
+                frame_types.append('P')
+                motion_vectors.append(mv_frame)
+        self.metadata = {
+            "frame_types": frame_types,
+            "motion_vectors": motion_vectors,
+            "frame_size": self.frame_size,
+            "fps": self.fps,
+            "q_factor": q,
+            "encoding_method": "pframe",
+            "gop": gop
+        }
+        serialized = pickle.dumps(compressed_frames)
+        self.compressed_data = zlib.compress(serialized)
+        self.decompress()
+        original_size = sum(f.nbytes for f in self.frames)
+        compressed_size = len(self.compressed_data)
+        self.ratio = original_size / compressed_size if compressed_size > 0 else float('inf')
+        self.psnr = self.calculate_psnr(self.frames, self.decoded)
 
     def compress_quantization(self, gop=1, q=8):
         """Original quantization-based compression method."""

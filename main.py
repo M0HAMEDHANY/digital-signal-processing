@@ -139,7 +139,7 @@ class MainWindow(QMainWindow):
         self.qValueLabel = QLabel("50")  # Label to display current Q value
         self.qSlider.valueChanged.connect(lambda: self.qValueLabel.setText(str(self.qSlider.value())))
         self.encVCombo = QComboBox()
-        self.encVCombo.addItems(["Huffman", "Arithmetic", "Intra"])
+        self.encVCombo.addItems(["Huffman", "Arithmetic", "Intra", "P-frame"])
 
         self.frameLbl = QLabel()
         self.frameLbl.setFixedHeight(360)
