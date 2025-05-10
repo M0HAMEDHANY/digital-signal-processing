@@ -24,110 +24,389 @@ o Compare original and decoded video.
 o Measure compression ratio and PSNR (Peak Signal-to-Noise Ratio).
 
 """
-
 import cv2
 import numpy as np
-from scipy.fftpack import dct, idct
-from utils import calculate_psnr
-
-
-def _block_process(channel: np.ndarray, Q: int):
-    """
-    Apply 8×8 block DCT, quantization by Q, inverse DCT.
-    """
-    h, w = channel.shape
-    out = np.zeros_like(channel, dtype=np.float32)
-    for i in range(0, h, 8):
-        for j in range(0, w, 8):
-            block = channel[i : i + 8, j : j + 8].astype(np.float32)
-            B = dct(dct(block.T, norm="ortho").T, norm="ortho")
-            Bq = np.round(B / Q)
-            Bi = idct(idct(Bq * Q.T, norm="ortho").T, norm="ortho")
-            out[i : i + 8, j : j + 8] = Bi
-    return out
-
+import pickle
+import zlib
+import os
 
 class VideoProcessor:
     def __init__(self):
         self.frames = []
         self.decoded = []
-        self.psnr = None
-        self.ratio = None
+        self.compressed_data = None
+        self.fps = 30  # Default FPS
+        self.frame_size = (0, 0)
         self.metadata = {}
-        self.fps = None
+        self.ratio = None
+        self.psnr = None
 
-    def load(self, filepath: str):
-        cap = cv2.VideoCapture(filepath)
+    def load(self, path):
+        """Load a video file and extract frames."""
+        if not os.path.exists(path):
+            raise ValueError(f"Video file does not exist: {path}")
+        
+        cap = cv2.VideoCapture(path)
         if not cap.isOpened():
-            raise ValueError(f"Could not open video '{filepath}'")
+            raise ValueError(f"Cannot open video file: {path}")
+        
         self.frames = []
-        self.fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        self.fps = cap.get(cv2.CAP_PROP_FPS) or self.fps
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
+            if frame is None:
+                continue  # Skip invalid frames
             self.frames.append(frame)
+        
+        if not self.frames:
+            cap.release()
+            raise ValueError("No frames loaded from video")
+        
+        self.frame_size = self.frames[0].shape[:2]
         cap.release()
 
-    def compress(self, gop_size: int, Q: int, method: str):
-        """
-        Simple I-/P-frame codec: every gop_size-th frame is I-frame.
-        """
-        self.decoded = []
-        total_original = 0
-        total_compressed = 0
+    def compress(self, gop=1, q=50, encoding_method="quantization"):
+        """Compress video frames using the specified method."""
+        if not self.frames:
+            raise ValueError("No frames to compress")
+        
+        if encoding_method.lower() == "intra":
+            self.compress_intra(gop, q)
+        elif encoding_method.lower() == "pframe":
+            self.compress_inter(gop, q)
+        else:
+            self.compress_quantization(gop, q)
 
-        prev_dec = None
-        for idx, fr in enumerate(self.frames):
-            yuv = cv2.cvtColor(fr, cv2.COLOR_BGR2YCrCb)
-            channels = cv2.split(yuv)
-            rec_ch = []
-
-            if idx % gop_size == 0:
-                # I-frame: DCT quant per block
-                for ch in channels:
-                    rec_ch.append(_block_process(ch, Q))
-                # rough bit‐estimate
-                total_compressed += fr.size  # placeholder
+    def compress_inter(self, gop=10, q=50, block_size=16, search_range=8):
+        """Compress video using I-frames and P-frames (inter-frame prediction)."""
+        frames = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32) for f in self.frames]
+        compressed_frames = []
+        frame_types = []
+        motion_vectors = []
+        for idx, frame in enumerate(frames):
+            if idx % gop == 0:
+                # I-frame: use intra compression
+                compressed_blocks = []
+                for i in range(0, frame.shape[0], 8):
+                    for j in range(0, frame.shape[1], 8):
+                        block = frame[i:i+8, j:j+8] - 128
+                        dct_block = cv2.dct(block)
+                        quantized = np.round(dct_block / q).astype(np.int16)
+                        zigzag = self.zigzag_scan(quantized)
+                        rle = self.run_length_encode(zigzag)
+                        compressed_blocks.append(rle)
+                compressed_frames.append(compressed_blocks)
+                frame_types.append('I')
+                motion_vectors.append(None)
+                ref_frame = frame.copy()
             else:
-                # P-frame: simple copy previous decoded
-                if prev_dec is None:
-                    rec_ch = channels
-                else:
-                    rec_ch = cv2.split(prev_dec)
-                total_compressed += 1  # placeholder
+                # P-frame: block matching
+                mv_frame = []
+                residual_blocks = []
+                for i in range(0, frame.shape[0], block_size):
+                    for j in range(0, frame.shape[1], block_size):
+                        block = frame[i:i+block_size, j:j+block_size]
+                        best_mv = (0, 0)
+                        min_error = float('inf')
+                        for dx in range(-search_range, search_range+1):
+                            for dy in range(-search_range, search_range+1):
+                                ref_i = i + dx
+                                ref_j = j + dy
+                                if (0 <= ref_i < frame.shape[0]-block_size+1 and
+                                    0 <= ref_j < frame.shape[1]-block_size+1):
+                                    ref_block = ref_frame[ref_i:ref_i+block_size, ref_j:ref_j+block_size]
+                                    error = np.sum(np.abs(block - ref_block))
+                                    if error < min_error:
+                                        min_error = error
+                                        best_mv = (dx, dy)
+                        mv_frame.append(best_mv)
+                        ref_i = i + best_mv[0]
+                        ref_j = j + best_mv[1]
+                        ref_block = ref_frame[ref_i:ref_i+block_size, ref_j:ref_j+block_size]
+                        residual = block - ref_block
+                        # DCT, quantize, zigzag, RLE
+                        for bi in range(0, block_size, 8):
+                            for bj in range(0, block_size, 8):
+                                subblock = residual[bi:bi+8, bj:bj+8]
+                                dct_block = cv2.dct(subblock)
+                                quantized = np.round(dct_block / q).astype(np.int16)
+                                zigzag = self.zigzag_scan(quantized)
+                                rle = self.run_length_encode(zigzag)
+                                residual_blocks.append(rle)
+                compressed_frames.append(residual_blocks)
+                frame_types.append('P')
+                motion_vectors.append(mv_frame)
+        self.metadata = {
+            "frame_types": frame_types,
+            "motion_vectors": motion_vectors,
+            "frame_size": self.frame_size,
+            "fps": self.fps,
+            "q_factor": q,
+            "encoding_method": "pframe",
+            "gop": gop
+        }
+        serialized = pickle.dumps(compressed_frames)
+        self.compressed_data = zlib.compress(serialized)
+        self.decompress()
+        original_size = sum(f.nbytes for f in self.frames)
+        compressed_size = len(self.compressed_data)
+        self.ratio = original_size / compressed_size if compressed_size > 0 else float('inf')
+        self.psnr = self.calculate_psnr(self.frames, self.decoded)
 
-            # merge and convert back
-            merged = cv2.merge([np.clip(c, 0, 255).astype(np.uint8) for c in rec_ch])
-            bgr = cv2.cvtColor(merged, cv2.COLOR_YCrCb2BGR)
-            self.decoded.append(bgr)
-            prev_dec = merged
-            total_original += fr.size
+    def compress_quantization(self, gop=1, q=8):
+        """Original quantization-based compression method."""
+        # if q < 1 or q > 8:
+        #     raise ValueError("Quantization bits must be between 1 and 8")
 
-        # PSNR per frame averaged
-        psnrs = [calculate_psnr(o, d) for o, d in zip(self.frames, self.decoded)]
-        self.psnr = float(np.mean(psnrs))
-        self.ratio = total_original / max(total_compressed, 1)
+        quantized_frames = []
+        for frame in self.frames:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            normalized = gray.astype(np.float32) / 255.0
+            levels = 2 ** q
+            quantized = np.round(normalized * (levels - 1)).astype(np.uint8)
+            quantized_frames.append(quantized)
 
-        self.metadata.update(
-            {
-                "gop_size": gop_size,
-                "Q": Q,
-                "method": method,
-                "original_frames": len(self.frames),
-            }
-        )
+        self.metadata["bits"] = q
+        self.metadata["frame_size"] = self.frame_size
+        self.metadata["fps"] = self.fps
+        self.metadata["encoding_method"] = "quantization"
 
-    def save_bitstream(self, path: str):
-        np.savez(path, metadata=self.metadata, psnr=self.psnr, ratio=self.ratio)
+        serialized = pickle.dumps(quantized_frames)
+        self.compressed_data = zlib.compress(serialized)
 
-    def save_video(self, path: str):
+        self.decompress()
+
+        original_size = sum(f.nbytes for f in self.frames)
+        compressed_size = len(self.compressed_data)
+        self.ratio = original_size / compressed_size if compressed_size > 0 else float('inf')
+
+        self.psnr = self.calculate_psnr(self.frames, self.decoded)
+
+    def compress_intra(self, gop=1, q=50):
+        """Compress frames using intra-frame compression (I-frame) with DCT, quantization, zigzag, and RLE using libraries."""
+        if q < 1 or q > 100:
+            raise ValueError("Quantization factor must be between 1 and 100")
+
+        # Standard JPEG quantization matrix for 8x8 blocks
+        quantization_matrix = np.array([
+            [16, 11, 10, 16, 24, 40, 51, 61],
+            [12, 12, 14, 19, 26, 58, 60, 55],
+            [14, 13, 16, 24, 40, 57, 69, 56],
+            [14, 17, 22, 29, 51, 87, 80, 62],
+            [18, 22, 37, 56, 68, 109, 103, 77],
+            [24, 35, 55, 64, 81, 104, 113, 92],
+            [49, 64, 78, 87, 103, 121, 120, 101],
+            [72, 92, 95, 98, 112, 100, 103, 99]
+        ], dtype=np.float32)
+
+        # Scale the quantization matrix based on q (quality factor: 1-100)
+        if q < 50:
+            scale = 5000 / q
+        else:
+            scale = 200 - 2 * q
+        scale = max(1, min(200, scale))  # Clamp scale between 1 and 200
+        q_matrix = np.clip(np.round(quantization_matrix * scale / 100), 1, 255)
+
+        compressed_frames = []
+        for frame in self.frames:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32) - 128  # Center around 0
+            height, width = gray.shape
+            # Pad the frame to be divisible by 8x8 blocks
+            pad_height = (8 - height % 8) % 8
+            pad_width = (8 - width % 8) % 8
+            padded = np.pad(gray, ((0, pad_height), (0, pad_width)), mode='constant')
+
+            # Process 8x8 blocks
+            compressed_blocks = []
+            for i in range(0, padded.shape[0], 8):
+                for j in range(0, padded.shape[1], 8):
+                    block = padded[i:i+8, j:j+8]
+                    # Apply DCT using cv2.dct
+                    dct_block = cv2.dct(block)
+                    # Quantize using the scaled matrix
+                    quantized_block = np.round(dct_block / q_matrix).astype(np.int16)
+                    # Zigzag scan using numpy indexing
+                    zigzag = self.zigzag_scan(quantized_block)
+                    # Run-length encoding
+                    rle = self.run_length_encode(zigzag)
+                    compressed_blocks.append(rle)
+
+            compressed_frames.append(compressed_blocks)
+
+        # Store metadata
+        self.metadata["q_factor"] = q
+        self.metadata["frame_size"] = self.frame_size
+        self.metadata["padded_size"] = padded.shape
+        self.metadata["fps"] = self.fps
+        self.metadata["encoding_method"] = "intra"
+
+        # Serialize and compress
+        serialized = pickle.dumps(compressed_frames)
+        self.compressed_data = zlib.compress(serialized)
+
+        # Decompress for PSNR calculation
+        self.decompress()
+
+        # Calculate compression ratio
+        original_size = sum(f.nbytes for f in self.frames)
+        compressed_size = len(self.compressed_data)
+        self.ratio = original_size / compressed_size if compressed_size > 0 else float('inf')
+
+        # Calculate PSNR
+        self.psnr = self.calculate_psnr(self.frames, self.decoded)
+
+    def zigzag_scan(self, block):
+        """Convert an 8x8 block into a 1D array using zigzag order with numpy."""
+        if block.shape != (8, 8):
+            raise ValueError("Block must be 8x8")
+        
+        # Define zigzag pattern indices
+        indices = np.array([
+            [0, 1, 5, 6, 14, 15, 27, 28],
+            [2, 4, 7, 13, 16, 26, 29, 42],
+            [3, 8, 12, 17, 25, 30, 41, 43],
+            [9, 11, 18, 24, 31, 40, 44, 53],
+            [10, 19, 23, 32, 39, 45, 52, 54],
+            [20, 22, 33, 38, 46, 51, 55, 60],
+            [21, 34, 37, 47, 50, 56, 59, 61],
+            [35, 36, 48, 49, 57, 58, 62, 63]
+        ])
+        return block[indices]
+
+    def run_length_encode(self, data):
+        """Apply run-length encoding to a 1D array."""
+        if not data:
+            return []
+
+        encoded = []
+        count = 1
+        current = data[0]
+        for i in range(1, len(data)):
+            if data[i] == current and count < 255:  # Limit count to 255 for byte encoding
+                count += 1
+            else:
+                encoded.append((current, count))
+                current = data[i]
+                count = 1
+        encoded.append((current, count))
+        return encoded
+
+    def inverse_zigzag_scan(self, data):
+        """Convert a 1D zigzag array back into an 8x8 block."""
+        if len(data) != 64:
+            raise ValueError("Data must have 64 elements for an 8x8 block")
+        
+        indices = np.array([
+            [0, 1, 5, 6, 14, 15, 27, 28],
+            [2, 4, 7, 13, 16, 26, 29, 42],
+            [3, 8, 12, 17, 25, 30, 41, 43],
+            [9, 11, 18, 24, 31, 40, 44, 53],
+            [10, 19, 23, 32, 39, 45, 52, 54],
+            [20, 22, 33, 38, 46, 51, 55, 60],
+            [21, 34, 37, 47, 50, 56, 59, 61],
+            [35, 36, 48, 49, 57, 58, 62, 63]
+        ])
+        block = np.zeros((8, 8), dtype=np.float32)
+        block[indices] = data
+        return block
+
+    def run_length_decode(self, rle_data):
+        """Decode run-length encoded data into a 1D array."""
+        decoded = []
+        for value, count in rle_data:
+            decoded.extend([value] * count)
+        return decoded
+
+    def calculate_psnr(self, original_frames, compressed_frames):
+        """Calculate PSNR between original and compressed frames."""
+        if len(original_frames) != len(compressed_frames):
+            raise ValueError("Mismatch in number of original and compressed frames")
+        
+        psnr_values = []
+        max_pixel_value = 255.0
+        for orig, comp in zip(original_frames, compressed_frames):
+            if len(comp.shape) == 2:  # Grayscale
+                comp = cv2.cvtColor(comp, cv2.COLOR_GRAY2BGR)
+            mse = np.mean((orig.astype(np.float32) - comp.astype(np.float32)) ** 2)
+            if mse == 0:
+                psnr_values.append(100.0)
+            else:
+                psnr = 10 * np.log10((max_pixel_value ** 2) / mse)
+                psnr_values.append(psnr)
+        return np.mean(psnr_values) if psnr_values else 0.0
+
+    def decompress(self):
+        """Decompress the compressed video data."""
+        if not self.compressed_data:
+            raise ValueError("No compressed data available")
+
+        try:
+            decompressed = zlib.decompress(self.compressed_data)
+            compressed_frames = pickle.loads(decompressed)
+        except (zlib.error, pickle.PickleError) as e:
+            raise ValueError(f"Decompression failed: {str(e)}")
+
+        encoding_method = self.metadata.get("encoding_method", "quantization")
+        if encoding_method == "quantization":
+            bits = self.metadata.get("bits", 8)
+            self.decoded = [
+                np.uint8(f * 255 / (2 ** bits - 1)) for f in compressed_frames
+            ]
+        else:  # Intra-frame compression
+            q = self.metadata.get("q_factor", 50)
+            quantization_matrix = np.array([
+                [16, 11, 10, 16, 24, 40, 51, 61],
+                [12, 12, 14, 19, 26, 58, 60, 55],
+                [14, 13, 16, 24, 40, 57, 69, 56],
+                [14, 17, 22, 29, 51, 87, 80, 62],
+                [18, 22, 37, 56, 68, 109, 103, 77],
+                [24, 35, 55, 64, 81, 104, 113, 92],
+                [49, 64, 78, 87, 103, 121, 120, 101],
+                [72, 92, 95, 98, 112, 100, 103, 99]
+            ], dtype=np.float32)
+
+            if q < 50:
+                scale = 5000 / q
+            else:
+                scale = 200 - 2 * q
+            scale = max(1, min(200, scale))
+            q_matrix = np.clip(np.round(quantization_matrix * scale / 100), 1, 255)
+
+            self.decoded = []
+            padded_shape = self.metadata["padded_size"]
+            for compressed_blocks in compressed_frames:
+                frame = np.zeros(padded_shape, dtype=np.float32)
+                block_idx = 0
+                for i in range(0, padded_shape[0], 8):
+                    for j in range(0, padded_shape[1], 8):
+                        rle = compressed_blocks[block_idx]
+                        zigzag = self.run_length_decode(rle)
+                        quantized_block = self.inverse_zigzag_scan(zigzag)
+                        dct_block = quantized_block * q_matrix
+                        block = cv2.idct(dct_block)
+                        frame[i:i+8, j:j+8] = block
+                        block_idx += 1
+                frame = frame[:self.frame_size[0], :self.frame_size[1]] + 128
+                self.decoded.append(np.clip(frame, 0, 255).astype(np.uint8))
+
+    def save_video(self, path):
+        """Save the decoded video to a file."""
         if not self.decoded:
-            raise ValueError("No decoded video to save")
-        h, w, _ = self.decoded[0].shape
-        writer = cv2.VideoWriter(
-            path, cv2.VideoWriter_fourcc(*"XVID"), self.fps, (w, h)
-        )
+            raise ValueError("No decoded video available")
+
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        out = cv2.VideoWriter(path, fourcc, self.fps, self.frame_size, isColor=False)
+        
         for frame in self.decoded:
-            writer.write(frame)
-        writer.release()
+            out.write(frame)
+        out.release()
+
+    def save_bitstream(self, path):
+        """Save the compressed bitstream to a file."""
+        if not self.compressed_data:
+            raise ValueError("No compressed data available")
+
+        with open(path, 'wb') as f:
+            f.write(self.compressed_data)
