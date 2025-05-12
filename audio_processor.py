@@ -55,12 +55,10 @@ class AudioProcessor:
         various formats and conversions automatically.
         """
         try:
-            # librosa.load automatically converts to mono (mono=True by default)
-            # and handles various audio formats
+
             self.signal, self.fs = librosa.load(filepath, sr=None, mono=True)
             self.filename = os.path.basename(filepath)
 
-            # Create time array
             length = self.signal.shape[0]
             self.time = np.linspace(0, length / self.fs, num=length)
 
@@ -72,11 +70,10 @@ class AudioProcessor:
 
     def stop(self):
         if self._play_thread is not None:
-            # Create a signal to stop the stream
+
             self._stop_signal = True
 
-            # Wait for thread to finish
-            self._play_thread.join(timeout=0.5)  # Add timeout to prevent hanging
+            self._play_thread.join(timeout=0.5)
             self._play_thread = None
 
     def denoise(self, prop_decrease=1.0):
@@ -97,19 +94,15 @@ class AudioProcessor:
         self.bits = bits
         self.metadata["method"] = method
 
-        # STFT
         f, t, Z = stft(self.signal, fs=self.fs, nperseg=win_size)
         mag = np.abs(Z)
         self.phase = np.angle(Z)
 
-        # Quantize magnitude
         mag_q = np.round(mag / mag.max() * (2**bits - 1)).astype(np.uint8)
 
-        # Serialize + compress using zlib
         serialized = pickle.dumps(mag_q)
         self.compressed_data = zlib.compress(serialized, level=9)
 
-        # Save for metadata
         self.metadata.update(
             {
                 "original_shape": mag_q.shape,
@@ -118,13 +111,11 @@ class AudioProcessor:
             }
         )
 
-        # Reconstruct audio
         mag_d = mag_q / (2**bits - 1) * mag.max()
         Z_rec = mag_d * np.exp(1j * self.phase)
         _, x_rec = istft(Z_rec, fs=self.fs, nperseg=win_size)
         self.reconstructed = x_rec.astype(np.float32)
 
-        # SNR
         N = min(len(self.signal), len(self.reconstructed))
         sig = self.signal[:N]
         rec = self.reconstructed[:N]
@@ -134,19 +125,16 @@ class AudioProcessor:
         self.snr = 10 * np.log10(p_sig / p_noise) if p_noise > 0 else float("inf")
 
     def play(self, data):
-        self._stop_signal = False  # Reset stop signal
+        self._stop_signal = False
 
         def _worker():
             stream = self._pa.open(
                 format=pyaudio.paFloat32, channels=1, rate=self.fs, output=True
             )
 
-            # Process data in chunks to allow interruption
             chunk_size = 1024
             data_bytes = data.tobytes()
-            for i in range(
-                0, len(data_bytes), chunk_size * 4
-            ):  # *4 because float32 = 4 bytes
+            for i in range(0, len(data_bytes), chunk_size * 4):
                 if self._stop_signal:
                     break
                 chunk = data_bytes[i : i + chunk_size * 4]
@@ -172,7 +160,6 @@ class AudioProcessor:
         if self.reconstructed is None:
             raise ValueError("Nothing to save")
 
-        # If path is a directory, use original filename + "_constructed"
         if os.path.isdir(path):
             if self.filename:
                 base, ext = os.path.splitext(self.filename)
@@ -180,7 +167,6 @@ class AudioProcessor:
                 sf.write(new_path, self.reconstructed, self.fs)
                 return new_path
 
-        # Otherwise use provided path
         sf.write(path, self.reconstructed, self.fs)
         return path
 
@@ -206,10 +192,8 @@ class AudioProcessor:
         self.fs = int(data["fs"])
         self.metadata = data["metadata"].item()
 
-        # Decompress + deserialize
         mag_q = pickle.loads(zlib.decompress(self.compressed_data))
 
-        # Reconstruct
         mag_d = mag_q / (2**self.bits - 1) * self.metadata["max_value"]
         Z_rec = mag_d * np.exp(1j * self.phase)
         _, x_rec = istft(Z_rec, fs=self.fs, nperseg=self.win_size)
