@@ -29,6 +29,7 @@ import zlib
 import pickle
 import os
 
+
 class AudioProcessor:
     def __init__(self):
         self.signal = None
@@ -77,7 +78,6 @@ class AudioProcessor:
             # Wait for thread to finish
             self._play_thread.join(timeout=0.5)  # Add timeout to prevent hanging
             self._play_thread = None
-        
             
     def denoise(self, threshold: float) -> np.ndarray:
         # print("Denoising...")
@@ -186,15 +186,14 @@ class AudioProcessor:
 
     def play_processed(self):
         if self.reconstructed is None:
-            raise ValueError("Run compress() first")
+            raise ValueError("Run compress first")
         self.play(self.reconstructed)
 
     def save_wav(self, path):
         if self.reconstructed is None:
             raise ValueError("Nothing to save")
-        
+
         # If path is a directory, use original filename + "_constructed"
-        import os
         if os.path.isdir(path):
             if self.filename:
                 base, ext = os.path.splitext(self.filename)

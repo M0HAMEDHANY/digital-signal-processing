@@ -1,7 +1,7 @@
 import os
 import sys
 import numpy as np
-import cv2  # أضف هذا السطر
+import cv2
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -19,19 +19,25 @@ from PyQt5.QtWidgets import (
     QGroupBox,
 )
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QImage, QPixmap
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from PyQt5.QtGui import QImage, QPixmap, QPalette, QColor
+
+# Add matplotlib imports for plotting
 from matplotlib.figure import Figure
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from audio_processor import AudioProcessor
 from video_processor import VideoProcessor
 from create_video import CreateVideo
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Multimedia Compression Suite")
         self.resize(1000, 800)
+
+        # Apply styling
+        self.apply_styles()
 
         # Track last processed audio buffer (denoised or reconstructed)
         self.last_audio = None
@@ -41,9 +47,132 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.build_video_tab(), "Video")
         self.setCentralWidget(tabs)
 
+    def apply_styles(self):
+        """Apply stylesheet to the application"""
+        stylesheet = """
+        QMainWindow {
+            background-color: #f0f0f0;
+        }
+        
+        QTabWidget::pane {
+            border: 1px solid #cccccc;
+            background-color: #ffffff;
+            border-radius: 4px;
+        }
+        
+        QTabBar::tab {
+            background-color: #e0e0e0;
+            padding: 8px 16px;
+            margin-right: 2px;
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+        }
+        
+        QTabBar::tab:selected {
+            background-color: #ffffff;
+            border: 1px solid #cccccc;
+            border-bottom-color: #ffffff;
+        }
+        
+        QPushButton {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        
+        QPushButton:hover {
+            background-color: #2980b9;
+        }
+        
+        QPushButton:pressed {
+            background-color: #1c6ea4;
+        }
+        
+        QLabel {
+            color: #333333;
+            font-size: 12px;
+        }
+        
+        QSlider {
+            height: 24px;
+        }
+        
+        QSlider::groove:horizontal {
+            border: 1px solid #999999;
+            height: 8px;
+            background: #cccccc;
+            margin: 2px 0;
+            border-radius: 4px;
+        }
+        
+        QSlider::handle:horizontal {
+            background: #3498db;
+            border: 1px solid #5c5c5c;
+            width: 18px;
+            margin: -5px 0;
+            border-radius: 9px;
+        }
+        
+        QSlider::handle:horizontal:hover {
+            background: #2980b9;
+        }
+        
+        QComboBox {
+            border: 1px solid #cccccc;
+            border-radius: 4px;
+            padding: 5px;
+            background-color: white;
+            selection-background-color: #3498db;
+        }
+        
+        QComboBox::drop-down {
+            subcontrol-origin: padding;
+            subcontrol-position: top right;
+            width: 20px;
+            border-left-width: 1px;
+            border-left-color: #cccccc;
+            border-left-style: solid;
+            border-top-right-radius: 4px;
+            border-bottom-right-radius: 4px;
+        }
+        
+        QGroupBox {
+            border: 1px solid #cccccc;
+            border-radius: 4px;
+            margin-top: 16px;
+            padding-top: 16px;
+            font-weight: bold;
+        }
+        
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            left: 10px;
+            padding: 0 5px;
+            color: #333333;
+        }
+        """
+
+        # Set the application-wide stylesheet
+        self.setStyleSheet(stylesheet)
+
+        # Set a darker background for the plot canvases
+        for canvas_name in ["origCan", "cleanCan", "procCan"]:
+            if hasattr(self, canvas_name):
+                canvas = getattr(self, canvas_name)
+                canvas.figure.patch.set_facecolor("#f5f5f5")
+                canvas.figure.tight_layout(pad=3.0)
+
     def build_audio_tab(self):
         w = QWidget()
         layout = QVBoxLayout(w)
+
+        # Set spacing and margins for better layout
+        layout.setSpacing(10)
+        layout.setContentsMargins(15, 15, 15, 15)
 
         self.ap = AudioProcessor()
 
@@ -60,10 +189,15 @@ class MainWindow(QMainWindow):
         btn_stop.clicked.connect(self.stop_audio)
         btn_save = QPushButton("Save")
         btn_save.clicked.connect(self.save_audio)
-        
+
         self.winSlider = QSlider(Qt.Horizontal)
         self.winSlider.setRange(256, 4096)
         self.winSlider.setValue(1024)
+        self.winValueLabel = QLabel("1024")  # Add value label for window size
+        self.winSlider.valueChanged.connect(
+            lambda: self.winValueLabel.setText(str(self.winSlider.value()))
+        )
+
         self.bitsCombo = QComboBox()
         self.bitsCombo.addItems(["4", "8", "16"])
         self.encCombo = QComboBox()
@@ -73,8 +207,13 @@ class MainWindow(QMainWindow):
         self.noiseSlider = QSlider(Qt.Horizontal)
         self.noiseSlider.setRange(100, 1000)
         self.noiseSlider.setValue(10)
+        self.noiseValueLabel = QLabel("10")  # Add value label for noise threshold
+        self.noiseSlider.valueChanged.connect(
+            lambda: self.noiseValueLabel.setText(str(self.noiseSlider.value()))
+        )
+
         btn_clean = QPushButton("Plot Clean Signal")
-        #btn_clean.clicked.connect(self.plot_clean) 
+        btn_clean.clicked.connect(self.plot_clean)
 
         # Canvases
         self.origCan = FigureCanvas(Figure(figsize=(5, 2)))
@@ -88,6 +227,7 @@ class MainWindow(QMainWindow):
             btn_run,
             QLabel("Win:"),
             self.winSlider,
+            self.winValueLabel,  # Add window size value label to layout
             QLabel("Bits:"),
             self.bitsCombo,
             QLabel("Enc:"),
@@ -101,6 +241,7 @@ class MainWindow(QMainWindow):
         hl2 = QHBoxLayout()
         hl2.addWidget(QLabel("Noise Threshold %:"))
         hl2.addWidget(self.noiseSlider)
+        hl2.addWidget(self.noiseValueLabel)  # Add noise threshold value label to layout
         hl2.addWidget(btn_clean)
         layout.addLayout(hl2)
 
@@ -117,6 +258,11 @@ class MainWindow(QMainWindow):
     def build_video_tab(self):
         w = QWidget()
         layout = QVBoxLayout(w)
+
+        # Set spacing and margins for better layout
+        layout.setSpacing(10)
+        layout.setContentsMargins(15, 15, 15, 15)
+
         self.vp = VideoProcessor()
 
         btn_load = QPushButton("Load Video")
@@ -137,11 +283,18 @@ class MainWindow(QMainWindow):
         self.gopSlider = QSlider(Qt.Horizontal)
         self.gopSlider.setRange(1, 30)
         self.gopSlider.setValue(10)
+        self.gopValueLabel = QLabel("10")  # Add value label for GOP size
+        self.gopSlider.valueChanged.connect(
+            lambda: self.gopValueLabel.setText(str(self.gopSlider.value()))
+        )
+
         self.qSlider = QSlider(Qt.Horizontal)
         self.qSlider.setRange(1, 100)
         self.qSlider.setValue(50)
         self.qValueLabel = QLabel("50")  # Label to display current Q value
-        self.qSlider.valueChanged.connect(lambda: self.qValueLabel.setText(str(self.qSlider.value())))
+        self.qSlider.valueChanged.connect(
+            lambda: self.qValueLabel.setText(str(self.qSlider.value()))
+        )
         self.encVCombo = QComboBox()
         self.encVCombo.addItems(["Huffman", "Arithmetic", "Intra", "P-frame"])
 
@@ -158,6 +311,7 @@ class MainWindow(QMainWindow):
             btn_run,
             QLabel("GOP:"),
             self.gopSlider,
+            self.gopValueLabel,  # Add GOP size value label to layout
             QLabel("Q:"),
             self.qSlider,
             self.qValueLabel,
@@ -178,9 +332,9 @@ class MainWindow(QMainWindow):
 
         # Preview buttons layout
         hl2 = QHBoxLayout()
-        hl2.addWidget(btn_play_o) 
+        hl2.addWidget(btn_play_o)
         hl2.addWidget(btn_play_p)
-        hl2.addWidget(btn_create_vid) 
+        hl2.addWidget(btn_create_vid)
         layout.addLayout(hl2)
 
         return w
@@ -197,11 +351,12 @@ class MainWindow(QMainWindow):
             self.ap.load(path)
             self.last_audio = None
             self._plot(self.origCan, self.ap.time, self.ap.signal, "Original Signal")
-            
+
             import os
+
             filename = os.path.basename(path)
             self.setWindowTitle(f"Multimedia Compression Suite - Audio: {filename}")
-            
+
         except Exception as e:
             QMessageBox.critical(self, "Load Error", str(e))
 
@@ -213,7 +368,7 @@ class MainWindow(QMainWindow):
             self._plot(self.cleanCan, self.ap.time, clean, "Cleaned Signal")
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
-            
+
     def run_audio(self):
         try:
             self.ap.compress(
@@ -249,7 +404,7 @@ class MainWindow(QMainWindow):
             self.ap.play(self.last_audio)
 
     def save_audio(self):
-        if hasattr(self.ap, 'filename') and self.ap.filename:
+        if hasattr(self.ap, "filename") and self.ap.filename:
             path = QFileDialog.getExistingDirectory(self, "Select Directory to Save")
             if not path:
                 return
@@ -271,20 +426,26 @@ class MainWindow(QMainWindow):
                 )
             except Exception as e:
                 QMessageBox.critical(self, "Save Error", str(e))
-        
+
     def _plot(self, canvas, x, y, title):
         canvas.figure.clf()
         ax = canvas.figure.add_subplot(111)
-        ax.set_title(title)
-        ax.set_xlabel("Time [s]")
-        ax.set_ylabel("Amplitude")
+        ax.set_title(title, fontweight="bold", fontsize=12)
+        ax.set_xlabel("Time [s]", fontweight="bold")
+        ax.set_ylabel("Amplitude", fontweight="bold")
+        ax.set_facecolor("#f9f9f9")
+        ax.grid(True, linestyle="--", alpha=0.7)
         if y.ndim == 1:
             N = min(len(x), len(y))
-            ax.plot(x[:N], y[:N])
+            ax.plot(x[:N], y[:N], linewidth=1.5, color="#3498db")
         else:
+            colors = ["#3498db", "#e74c3c", "#2ecc71", "#f39c12", "#9b59b6"]
             for ch in range(y.shape[1]):
                 N = min(len(x), y.shape[0])
-                ax.plot(x[:N], y[:N, ch], label=f"Ch {ch+1}")
+                color = colors[ch % len(colors)]
+                ax.plot(
+                    x[:N], y[:N, ch], linewidth=1.5, color=color, label=f"Ch {ch+1}"
+                )
             ax.legend()
         canvas.draw()
 
@@ -301,6 +462,10 @@ class MainWindow(QMainWindow):
             self.frameIdx = 0
             filename = os.path.basename(path)
             self.setWindowTitle(f"Multimedia Compression Suite - Video: {filename}")
+            # Style the video frame display area
+            self.frameLbl.setStyleSheet(
+                "border: 2px solid #3498db; border-radius: 4px; background-color: #000000;"
+            )
             QMessageBox.information(self, "Loaded", f"{len(self.vp.frames)} frames")
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
@@ -335,7 +500,9 @@ class MainWindow(QMainWindow):
             self.frameIdx += 1
         except Exception as e:
             self.timer.stop()
-            QMessageBox.critical(self, "Playback Error", f"Error displaying frame: {str(e)}")
+            QMessageBox.critical(
+                self, "Playback Error", f"Error displaying frame: {str(e)}"
+            )
 
     def preview_original(self):
         if not self.vp.frames:
@@ -375,13 +542,13 @@ class MainWindow(QMainWindow):
 
     def create_from_frames(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Frame Folder")
-        
+
         if not folder:
             return
 
         # Debugging: Print the selected folder path
         print(f"Selected folder: {folder}")
-        
+
         if not os.path.exists(folder):
             QMessageBox.critical(self, "Error", f"Path '{folder}' does not exist.")
             return
@@ -389,20 +556,53 @@ class MainWindow(QMainWindow):
         try:
             creator = CreateVideo()
             creator.create_video(folder)
-            
-            save_path, _ = QFileDialog.getSaveFileName(self, "Save Video As", "Video.mp4", "MP4 Video (*.mp4)")
+
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, "Save Video As", "Video.mp4", "MP4 Video (*.mp4)"
+            )
             if not save_path:
                 return
 
             creator.save_video(save_path)
-            QMessageBox.information(self, "Success", f"Video created and saved as:\n{save_path}")
+            QMessageBox.information(
+                self, "Success", f"Video created and saved as:\n{save_path}"
+            )
 
         except Exception as e:
             QMessageBox.critical(self, "Video Creation Failed", str(e))
 
 
+# Apply the styles to QMessageBox globally
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+
+    # Set application-wide font
+    app.setFont(QApplication.font("QApplication"))
+
+    # Style QMessageBox
+    app.setStyleSheet(
+        """
+    QMessageBox {
+        background-color: #ffffff;
+    }
+    QMessageBox QLabel {
+        color: #333333;
+    }
+    QMessageBox QPushButton {
+        background-color: #3498db;
+        color: white;
+        border: none;
+        padding: 6px 12px;
+        border-radius: 3px;
+        font-weight: bold;
+        min-width: 80px;
+    }
+    QMessageBox QPushButton:hover {
+        background-color: #2980b9;
+    }
+    """
+    )
+
     win = MainWindow()
     win.show()
     sys.exit(app.exec_())
