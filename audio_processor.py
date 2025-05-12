@@ -37,7 +37,7 @@ class AudioProcessor:
         self.fs = None
         self.reconstructed = None
         self.snr = None
-        self.filename = None 
+        self.filename = None
         
         self._pa = pyaudio.PyAudio()
         self._play_thread = None
