@@ -296,7 +296,7 @@ class MainWindow(QMainWindow):
             lambda: self.qValueLabel.setText(str(self.qSlider.value()))
         )
         self.encVCombo = QComboBox()
-        self.encVCombo.addItems(["Intra", "P-frame"])
+        self.encVCombo.addItems(["Huffman", "Arithmetic", "Intra", "P-frame"])
 
         self.frameLbl = QLabel()
         self.frameLbl.setFixedHeight(360)
@@ -362,8 +362,10 @@ class MainWindow(QMainWindow):
 
     def plot_clean(self):
         try:
-            threshold = self.noiseSlider.value()
-            clean = self.ap.denoise(threshold)
+            # Map slider value (0–100) to 0.0–1.0
+            threshold = self.noiseSlider.value() / 1000.0
+            clean = self.ap.denoise(prop_decrease=threshold)
+
             self.last_audio = clean.astype(np.float32)
             self._plot(self.cleanCan, self.ap.time, clean, "Cleaned Signal")
         except Exception as e:
@@ -485,19 +487,41 @@ class MainWindow(QMainWindow):
 
     def _show_frame(self):
         try:
-            lst = self._play_list
-            if self.frameIdx >= len(lst):
+            # Check if we've reached the end of the frames
+            if self.frameIdx >= len(self._play_list):
                 self.timer.stop()
                 return
-            fr = lst[self.frameIdx]
-            h, w, _ = fr.shape if len(fr.shape) == 3 else (fr.shape[0], fr.shape[1], 1)
-            if len(fr.shape) == 2:  # Grayscale frame
-                fr = cv2.cvtColor(fr, cv2.COLOR_GRAY2BGR)
-            img = QImage(fr.data, w, h, 3 * w, QImage.Format_BGR888)
-            self.frameLbl.setPixmap(
-                QPixmap.fromImage(img).scaled(self.frameLbl.size(), Qt.KeepAspectRatio)
+
+            # Get the current frame
+            frame = self._play_list[self.frameIdx]
+
+            # Convert grayscale to BGR if needed
+            if len(frame.shape) == 2:
+                frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+
+            # Create QImage from frame data
+            height, width = frame.shape[:2]
+            bytesPerLine = 3 * width
+            qImg = QImage(frame.data, width, height, bytesPerLine, QImage.Format_BGR888)
+
+            # Create a pixmap and scale it while maintaining aspect ratio
+            pixmap = QPixmap.fromImage(qImg)
+
+            # Create a properly scaled pixmap that fits within the label
+            scaled_pixmap = pixmap.scaled(
+                self.frameLbl.width(),
+                self.frameLbl.height(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
             )
+
+            # Center the pixmap in the label
+            self.frameLbl.setAlignment(Qt.AlignCenter)
+            self.frameLbl.setPixmap(scaled_pixmap)
+
+            # Move to next frame
             self.frameIdx += 1
+
         except Exception as e:
             self.timer.stop()
             QMessageBox.critical(
