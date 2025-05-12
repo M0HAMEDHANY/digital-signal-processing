@@ -1,37 +1,3 @@
-"""
-2-Video Compression Project:
-Objective: Implement a basic video compression.
-Steps:
-# 1. Video Input Handling
-# o Create video frame-by-frame
-o Convert frames to YUV color space.
-
-2. Frame Type Decision
-o Choose I-frames and P-frames (e.g., every 10th frame is an I-frame).
-
-3. Intra-frame Compression (I-frame)
-o Apply DCT on 8x8 blocks.
-o Quantize DCT coefficients.
-o Apply zig-zag scan and run-length encoding.
-
-4. Inter-frame Compression (P-frame)
-o Perform motion estimation (e.g., block matching).
-o Compute motion vectors.
-o Encode motion vectors and residuals.
-
-5. Entropy Coding
-o Use Huffman or Arithmetic Coding on motion vectors and residuals.
-
-6. Bitstream Formation
-o Package frames into a bitstream with headers and frame type indicators.
-
-7. Testing & Evaluation
-o Compare original and decoded video.
-o Measure compression ratio and PSNR (Peak Signal-to-Noise Ratio).
-
-"""
-
-# Updated video_processor.py with DCT, quantization, zig-zag scan (I-frames) and motion estimation (P-frames)
 import cv2
 import numpy as np
 import pickle
@@ -41,11 +7,24 @@ import os
 
 def blockify(img, block_size=8):
     h, w = img.shape
-    return img.reshape(h // block_size, block_size, -1, block_size).swapaxes(1, 2).reshape(-1, block_size, block_size)
+    # Ensure dimensions are multiples of block_size
+    h_pad = h - (h % block_size) if h % block_size != 0 else h
+    w_pad = w - (w % block_size) if w % block_size != 0 else w
+    img_padded = img[:h_pad, :w_pad]
+    return img_padded.reshape(h_pad // block_size, block_size, -1, block_size).swapaxes(1, 2).reshape(-1, block_size, block_size)
 
 def unblockify(blocks, h, w, block_size=8):
-    blocks = blocks.reshape(h // block_size, w // block_size, block_size, block_size).swapaxes(1, 2)
-    return blocks.reshape(h, w)
+    # Ensure dimensions are multiples of block_size
+    h_pad = h - (h % block_size) if h % block_size != 0 else h
+    w_pad = w - (w % block_size) if w % block_size != 0 else w
+    blocks = blocks.reshape(h_pad // block_size, w_pad // block_size, block_size, block_size).swapaxes(1, 2)
+    result = blocks.reshape(h_pad, w_pad)
+    # If original dimensions were larger, pad with zeros
+    if h_pad < h or w_pad < w:
+        full_result = np.zeros((h, w), dtype=result.dtype)
+        full_result[:h_pad, :w_pad] = result
+        return full_result
+    return result
 
 def quantize(blocks, q=10):
     return np.round(blocks / q).astype(np.int16)
@@ -72,11 +51,14 @@ def izigzag(array):
 
 
 def motion_estimate(ref, target, block_size=8, search_range=4):
-    h, w = ref.shape
+    h, w = target.shape  # Use target dimensions to ensure proper size
+    # Ensure ref and target have the same dimensions
+    ref = cv2.resize(ref, (w, h)) if ref.shape != target.shape else ref
+    
     mv = []
     residuals = []
-    for i in range(0, h, block_size):
-        for j in range(0, w, block_size):
+    for i in range(0, h - block_size + 1, block_size):
+        for j in range(0, w - block_size + 1, block_size):
             best_match = (0, 0)
             min_error = float('inf')
             block = target[i:i+block_size, j:j+block_size]
@@ -103,12 +85,21 @@ def motion_compensate(ref, mv, residuals, block_size=8):
     h, w = ref.shape
     rec = np.zeros_like(ref)
     idx = 0
-    for i in range(0, h, block_size):
-        for j in range(0, w, block_size):
+    for i in range(0, h - block_size + 1, block_size):
+        for j in range(0, w - block_size + 1, block_size):
+            if idx >= len(mv):  # Safety check
+                break
             dy, dx = mv[idx]
             y, x = i + dy, j + dx
+            # Ensure coordinates are within bounds
+            if y < 0 or x < 0 or y + block_size > h or x + block_size > w:
+                # Use zero motion vector if out of bounds
+                y, x = i, j
             ref_block = ref[y:y+block_size, x:x+block_size]
-            rec[i:i+block_size, j:j+block_size] = ref_block + residuals[idx]
+            if idx < len(residuals):  # Safety check
+                rec[i:i+block_size, j:j+block_size] = ref_block + residuals[idx]
+            else:
+                rec[i:i+block_size, j:j+block_size] = ref_block
             idx += 1
     return rec
 
@@ -136,17 +127,30 @@ class VideoProcessor:
             yuv = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV)
             self.frames_yuv.append(yuv)
         cap.release()
-        self.frame_size = (self.frames[0].shape[1], self.frames[0].shape[0])
+        if self.frames:
+            self.frame_size = (self.frames[0].shape[1], self.frames[0].shape[0])
 
     def compress(self, gop=10, q=10, encoding_method="intra"):
-        if encoding_method.lower() == "intra":
-            self.compress_intra(q)
-        elif encoding_method.lower() == "pframe":
-            self.compress_inter(gop, q)
+        if not self.frames_yuv:
+            raise ValueError("No frames loaded. Please load a video first.")
 
-        self.decoded = self.convert_yuv_to_bgr(self.decoded)
+        # Convert encoding method to lowercase for case-insensitive comparison
+        encoding_method = encoding_method.lower()
+        
+        if encoding_method == "intra":
+            self.compress_intra(q)
+        elif encoding_method in ["p-frame", "pframe"]:
+            self.compress_inter(gop, q)
+        else:
+            raise ValueError(f"Unsupported encoding method: {encoding_method}")
+
+        # Convert decoded YUV frames back to BGR
+        bgr_decoded = self.convert_yuv_to_bgr(self.decoded)
+        self.decoded = bgr_decoded
+        
+        # Calculate compression ratio and PSNR
         self.ratio = self._compression_ratio()
-        self.psnr = self.calculate_psnr(self.frames_yuv, self.decoded)
+        self.psnr = self.calculate_psnr()
 
     def compress_intra(self, q):
         compressed = []
@@ -175,77 +179,193 @@ class VideoProcessor:
             self.decoded.append(rec.astype(np.uint8))
 
     def compress_inter(self, gop, q):
+        if not self.frames_yuv:
+            raise ValueError("No video loaded. Please load a video first.")
+
         compressed = []
-        ref = self.frames_yuv[0][:, :, 0]
-        h, w = ref.shape
 
-        # Intra compress first frame
-        blocks = blockify(ref)
-        dct_blocks = np.array([dct2(b) for b in blocks])
-        q_blocks = quantize(dct_blocks, q)
-        zz_blocks = np.array([zigzag(b) for b in q_blocks])
-        compressed.append(("I", zz_blocks))
+        # Process frames in groups of pictures (GOP)
+        for i in range(0, len(self.frames_yuv), gop):
+            # I-frame: the first frame in each GOP
+            i_frame = self.frames_yuv[i]
+            y = i_frame[:, :, 0].copy()  # Y channel
+            h, w = y.shape
+            
+            # Compress I-frame
+            blocks = blockify(y)
+            dct_blocks = np.array([dct2(b) for b in blocks])
+            q_blocks = quantize(dct_blocks, q)
+            zz_blocks = np.array([zigzag(b) for b in q_blocks])
+            compressed.append(("I", zz_blocks))
+            
+            # Decode I-frame to use as reference
+            blocks_dec = np.array([izigzag(b) for b in zz_blocks])
+            dq_blocks = dequantize(blocks_dec, q)
+            idct_blocks = np.array([idct2(b) for b in dq_blocks])
+            ref = unblockify(idct_blocks, h, w)
+            
+            # Process P-frames
+            end_idx = min(i + gop, len(self.frames_yuv))
+            for j in range(i + 1, end_idx):
+                curr_frame = self.frames_yuv[j]
+                curr_y = curr_frame[:, :, 0].copy()
+                
+                # Motion estimation and compensation
+                mv, res = motion_estimate(ref, curr_y)
+                
+                # Process residuals
+                res_dct = [dct2(r) for r in res]
+                q_res = [quantize(r, q) for r in res_dct]
+                zz_res = [zigzag(r) for r in q_res]
+                
+                compressed.append(("P", mv, zz_res))
+                
+                # Update reference frame for next P-frame
+                # Decode current frame
+                res_dec = [izigzag(r) for r in zz_res]
+                dq_res = [dequantize(r, q) for r in res_dec]
+                idct_res = [idct2(r) for r in dq_res]
+                
+                # Motion compensation to get reconstructed frame
+                ref = motion_compensate(ref, mv, idct_res)
 
-        for i in range(1, len(self.frames_yuv)):
-            y = self.frames_yuv[i][:, :, 0]
-            mv, res = motion_estimate(ref, y)
-            res_dct = [dct2(r) for r in res]
-            q_res = [quantize(b, q) for b in res_dct]
-            zz_res = [zigzag(b) for b in q_res]
-            compressed.append(("P", mv, zz_res))
-            ref = y
-
-        serialized = pickle.dumps({"type": "inter", "data": compressed})
+        # Store compressed data
+        serialized = pickle.dumps({"type": "inter", "gop": gop, "data": compressed})
         self.compressed_data = zlib.compress(serialized)
 
-        # Decompress
+        # Decode all frames
+        self.decoded = self.decode_compressed_data(q)
+
+    def decode_compressed_data(self, q):
+        if not self.compressed_data:
+            raise ValueError("No compressed data available")
+            
         raw = zlib.decompress(self.compressed_data)
         data = pickle.loads(raw)["data"]
-        self.decoded = []
+        decoded_frames = []
         ref = None
-
-        for item, frame in zip(data, self.frames_yuv):
-            if item[0] == "I":
+        
+        for item in data:
+            frame_type = item[0]
+            
+            if frame_type == "I":
+                # Decode I-frame
                 zz_blocks = item[1]
                 blocks = np.array([izigzag(b) for b in zz_blocks])
                 dq_blocks = dequantize(blocks, q)
                 idct_blocks = np.array([idct2(b) for b in dq_blocks])
-                y_rec = unblockify(idct_blocks, frame.shape[0], frame.shape[1])
+                
+                # Get original frame dimensions from YUV frame
+                frame_idx = len(decoded_frames)
+                if frame_idx < len(self.frames_yuv):
+                    h, w = self.frames_yuv[frame_idx][:, :, 0].shape
+                else:
+                    h, w = self.frame_size[1], self.frame_size[0]
+                
+                y_rec = unblockify(idct_blocks, h, w)
                 ref = y_rec.copy()
-            else:
+                
+                # Create full YUV frame
+                if frame_idx < len(self.frames_yuv):
+                    orig_frame = self.frames_yuv[frame_idx]
+                    u_channel = orig_frame[:, :, 1].copy()
+                    v_channel = orig_frame[:, :, 2].copy()
+                    rec = np.stack([y_rec, u_channel, v_channel], axis=2)
+                    decoded_frames.append(rec.astype(np.uint8))
+                
+            elif frame_type == "P":
+                # Decode P-frame
+                if ref is None:
+                    raise RuntimeError("Missing reference frame for P-frame decoding")
+                    
                 mv, zz_res = item[1], item[2]
+                
+                # Decode residual
                 res_blocks = [izigzag(b) for b in zz_res]
                 dq_res = [dequantize(b, q) for b in res_blocks]
-                res_idct = [idct2(b) for b in dq_res]
-                y_rec = motion_compensate(ref, mv, res_idct)
+                idct_res = [idct2(b) for b in dq_res]
+                
+                # Apply motion compensation
+                y_rec = motion_compensate(ref, mv, idct_res)
                 ref = y_rec.copy()
-
-            rec = np.stack([ref, frame[:, :, 1], frame[:, :, 2]], axis=2)
-            self.decoded.append(rec.astype(np.uint8))
+                
+                # Create full YUV frame
+                frame_idx = len(decoded_frames)
+                if frame_idx < len(self.frames_yuv):
+                    orig_frame = self.frames_yuv[frame_idx]
+                    u_channel = orig_frame[:, :, 1].copy()
+                    v_channel = orig_frame[:, :, 2].copy()
+                    rec = np.stack([y_rec, u_channel, v_channel], axis=2)
+                    decoded_frames.append(rec.astype(np.uint8))
+        
+        return decoded_frames
 
     def convert_yuv_to_bgr(self, yuv_frames):
         return [cv2.cvtColor(f, cv2.COLOR_YUV2BGR) for f in yuv_frames]
 
-    def calculate_psnr(self, originals, recs):
+    def calculate_psnr(self):
+        if not self.frames or not self.decoded:
+            return 0.0
+            
+        # Make sure both lists have the same length for comparison
+        min_len = min(len(self.frames), len(self.decoded))
         psnr_vals = []
-        for o, r in zip(originals, recs):
-            o_bgr = cv2.cvtColor(o, cv2.COLOR_YUV2BGR)
-            psnr_vals.append(cv2.PSNR(o_bgr, r))
-        return np.mean(psnr_vals)
+        
+        for i in range(min_len):
+            # Both should be in BGR format
+            orig = self.frames[i]
+            rec = self.decoded[i]
+            
+            # Ensure same dimensions
+            if orig.shape != rec.shape:
+                rec = cv2.resize(rec, (orig.shape[1], orig.shape[0]))
+                
+            # Calculate PSNR
+            try:
+                psnr = cv2.PSNR(orig, rec)
+                psnr_vals.append(psnr)
+            except Exception:
+                # Skip if PSNR calculation fails
+                continue
+                
+        return np.mean(psnr_vals) if psnr_vals else 0.0
 
     def _compression_ratio(self):
+        if not self.compressed_data or not self.frames_yuv:
+            return 0.0
+            
         orig_size = sum(f.nbytes for f in self.frames_yuv)
         comp_size = len(self.compressed_data)
         return orig_size / comp_size if comp_size > 0 else float("inf")
 
     def save_video(self, path):
-        bgr_frames = self.convert_yuv_to_bgr(self.decoded)
-        out = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"XVID"), self.fps, self.frame_size)
-        for f in bgr_frames:
-            out.write(f)
+        if not self.decoded:
+            raise ValueError("No decoded frames available. Run compression first.")
+            
+        # Ensure all frames have the same dimensions as frame_size
+        h, w = self.frame_size[1], self.frame_size[0]
+        out = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"XVID"), self.fps, (w, h))
+        
+        for frame in self.decoded:
+            # Resize if necessary
+            if frame.shape[1] != w or frame.shape[0] != h:
+                frame = cv2.resize(frame, (w, h))
+            out.write(frame)
+            
         out.release()
 
     def save_bitstream(self, path):
+        if not self.compressed_data:
+            raise ValueError("No compressed data available. Run compression first.")
+            
         with open(path, "wb") as f:
             f.write(self.compressed_data)
-        np.savez(path + ".metadata", metadata=self.metadata, fps=self.fps, frame_size=self.frame_size)
+            
+        # Save metadata
+        metadata = {
+            "fps": self.fps,
+            "frame_size": self.frame_size,
+            "ratio": self.ratio,
+            "psnr": self.psnr
+        }
+        np.savez(path + ".metadata", **metadata)

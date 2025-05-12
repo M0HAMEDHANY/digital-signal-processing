@@ -481,7 +481,7 @@ class MainWindow(QMainWindow):
                 self, "Done", f"PSNR: {self.vp.psnr:.2f} dB\nRatio: {self.vp.ratio:.2f}"
             )
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            QMessageBox.critical(self, "Compression Error", str(e))
 
     def _show_frame(self):
         try:
