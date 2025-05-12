@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 import pickle
 import zlib
-import os
 from multiprocessing import Pool
 
 def blockify(img, block_size=8):

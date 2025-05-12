@@ -194,7 +194,7 @@ class MainWindow(QMainWindow):
         self.winSlider = QSlider(Qt.Horizontal)
         self.winSlider.setRange(256, 4096)
         self.winSlider.setValue(1024)
-        self.winValueLabel = QLabel("1024")  # Add value label for window size
+        self.winValueLabel = QLabel("1024") 
         self.winSlider.valueChanged.connect(
             lambda: self.winValueLabel.setText(str(self.winSlider.value()))
         )
@@ -208,7 +208,7 @@ class MainWindow(QMainWindow):
         self.noiseSlider = QSlider(Qt.Horizontal)
         self.noiseSlider.setRange(100, 1000)
         self.noiseSlider.setValue(10)
-        self.noiseValueLabel = QLabel("10")  # Add value label for noise threshold
+        self.noiseValueLabel = QLabel("10") 
         self.noiseSlider.valueChanged.connect(
             lambda: self.noiseValueLabel.setText(str(self.noiseSlider.value()))
         )
@@ -228,7 +228,7 @@ class MainWindow(QMainWindow):
             btn_run,
             QLabel("Win:"),
             self.winSlider,
-            self.winValueLabel,  # Add window size value label to layout
+            self.winValueLabel,  
             QLabel("Bits:"),
             self.bitsCombo,
             QLabel("Enc:"),
@@ -242,7 +242,7 @@ class MainWindow(QMainWindow):
         hl2 = QHBoxLayout()
         hl2.addWidget(QLabel("Noise Threshold %:"))
         hl2.addWidget(self.noiseSlider)
-        hl2.addWidget(self.noiseValueLabel)  # Add noise threshold value label to layout
+        hl2.addWidget(self.noiseValueLabel)  
         hl2.addWidget(btn_clean)
         layout.addLayout(hl2)
 
@@ -284,7 +284,7 @@ class MainWindow(QMainWindow):
         self.gopSlider = QSlider(Qt.Horizontal)
         self.gopSlider.setRange(1, 30)
         self.gopSlider.setValue(10)
-        self.gopValueLabel = QLabel("10")  # Add value label for GOP size
+        self.gopValueLabel = QLabel("10") 
         self.gopSlider.valueChanged.connect(
             lambda: self.gopValueLabel.setText(str(self.gopSlider.value()))
         )
@@ -292,7 +292,7 @@ class MainWindow(QMainWindow):
         self.qSlider = QSlider(Qt.Horizontal)
         self.qSlider.setRange(1, 100)
         self.qSlider.setValue(20)
-        self.qValueLabel = QLabel("20")  # Label to display current Q value
+        self.qValueLabel = QLabel("20")  
         self.qSlider.valueChanged.connect(
             lambda: self.qValueLabel.setText(str(self.qSlider.value()))
         )
@@ -312,7 +312,7 @@ class MainWindow(QMainWindow):
             btn_run,
             QLabel("GOP:"),
             self.gopSlider,
-            self.gopValueLabel,  # Add GOP size value label to layout
+            self.gopValueLabel,
             QLabel("Q:"),
             self.qSlider,
             self.qValueLabel,
@@ -454,50 +454,36 @@ class MainWindow(QMainWindow):
 
     def load_video(self):
         path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open Video",
-            "",
-            "Video Files (*.mp4 *.avi *.mov);;All Files (*)"
+            self, "Open Video", "", "Video Files (*.mp4 *.avi *.mov);;All Files (*)"
         )
-        
+
         if not path:
             return
-        
+
         try:
-            # التحقق من وجود الملف أولاً
             if not os.path.exists(path):
                 raise FileNotFoundError(f"Video file not found: {path}")
-            
-            # تحميل الفيديو
-            self.vp = VideoProcessor()  # إعادة تهيئة المعالج لتفادي مشاكل التحميل المتكرر
+
+            self.vp = VideoProcessor()
             self.vp.load(path)
-            
-            # التحقق من تحميل الإطارات بنجاح
-            if not hasattr(self.vp, 'frames') or not self.vp.frames:
+
+            if not hasattr(self.vp, "frames") or not self.vp.frames:
                 raise ValueError("No frames were loaded. The video might be corrupted.")
-            
-            # تهيئة متغيرات العرض
+
             self.frameIdx = 0
-            self._play_list = self.vp.frames  # تهيئة قائمة التشغيل
-            
-            # تحديث واجهة المستخدم
+            self._play_list = self.vp.frames
+
             filename = os.path.basename(path)
             self.setWindowTitle(f"Multimedia Compression Suite - Video: {filename}")
-            
-            # تنسيق عرض الفيديو
-            self.frameLbl.setStyleSheet(
-                "border: 2px solid #3498db; border-radius: 4px; background-color: #000000;"
-            )
-            
-            # عرض رسالة تأكيد مع معلومات الفيديو
+
             QMessageBox.information(
                 self,
                 "Video Loaded",
                 f"Successfully loaded {len(self.vp.frames)} frames\n"
                 f"Resolution: {self.vp.frame_size[0]}x{self.vp.frame_size[1]}\n"
-                f"FPS: {self.vp.fps:.2f}"
+                f"FPS: {self.vp.fps:.2f}",
             )
-            
+
         except FileNotFoundError as e:
             QMessageBox.critical(self, "File Error", str(e))
         except Exception as e:
@@ -505,35 +491,14 @@ class MainWindow(QMainWindow):
                 self,
                 "Loading Error",
                 f"Failed to load video:\n{str(e)}\n"
-                "Please make sure the file is a valid video."
-            )
-            
-            # عرض رسالة تأكيد مع معلومات الفيديو
-            QMessageBox.information(
-                self,
-                "Video Loaded",
-                f"Successfully loaded {len(self.vp.frames)} frames\n"
-                f"Resolution: {self.vp.frame_size[0]}x{self.vp.frame_size[1]}\n"
-                f"FPS: {self.vp.fps:.2f}"
-            )
-            
-        except FileNotFoundError as e:
-            QMessageBox.critical(self, "File Error", str(e))
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Loading Error",
-                f"Failed to load video:\n{str(e)}\n"
-                "Please make sure the file is a valid video."
+                "Please make sure the file is a valid video.",
             )
 
     def run_video(self):
         try:
             encoding_method = self.encVCombo.currentText().lower().replace("-", "")
             self.vp.compress(
-                self.gopSlider.value(),
-                self.qSlider.value(),
-                encoding_method
+                self.gopSlider.value(), self.qSlider.value(), encoding_method
             )
             QMessageBox.information(
                 self, "Done", f"PSNR: {self.vp.psnr:.2f} dB\nRatio: {self.vp.ratio:.2f}"
@@ -543,28 +508,24 @@ class MainWindow(QMainWindow):
 
     def _show_frame(self):
         try:
-            # التحقق من وجود قائمة تشغيل صالحة
-            if not hasattr(self, '_play_list') or not self._play_list:
+            if not hasattr(self, "_play_list") or not self._play_list:
                 self.timer.stop()
                 return
 
-            # التحقق من أن الفهرس ضمن النطاق الصحيح
             if self.frameIdx >= len(self._play_list):
                 self.timer.stop()
-                if hasattr(self, 'playback_looping') and self.playback_looping:
-                    self.frameIdx = 0  # إعادة التشغيل إذا كان الوضع التكرار مفعل
+                if hasattr(self, "playback_looping") and self.playback_looping:
+                    self.frameIdx = 0
                     return
                 else:
-                    self.frameIdx = 0  # إعادة التعيين للبدء من الأول
+                    self.frameIdx = 0
                     return
 
-            # الحصول على الإطار الحالي
             current_frame = self._play_list[self.frameIdx]
 
-            # معالجة الإطار (للتأكد من أنه ملون)
-            if len(current_frame.shape) == 2:  # إذا كان إطاراً رمادياً
+            if len(current_frame.shape) == 2:
                 frame_rgb = cv2.cvtColor(current_frame, cv2.COLOR_GRAY2BGR)
-            elif current_frame.shape[2] == 4:  # إذا كان فيه قناة ألفا
+            elif current_frame.shape[2] == 4:
                 frame_rgb = cv2.cvtColor(current_frame, cv2.COLOR_BGRA2BGR)
             else:
                 frame_rgb = current_frame
@@ -572,49 +533,37 @@ class MainWindow(QMainWindow):
             h, w, _ = frame_rgb.shape
             bytes_per_line = 3 * w
 
-            # إنشاء QImage من الإطار
-            q_img = QImage(
-                frame_rgb.data,
-                w, h,
-                bytes_per_line,
-                QImage.Format_BGR888
-            )
+            q_img = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format_BGR888)
 
-            # تحجيم الصورة مع الحفاظ على النسبة
             scaled_pixmap = QPixmap.fromImage(q_img).scaled(
                 self.frameLbl.size(),
                 Qt.KeepAspectRatio,
-                Qt.SmoothTransformation  # لجودة تحجيم أفضل
+                Qt.SmoothTransformation,
             )
 
-            # عرض الإطار في الواجهة
             self.frameLbl.setPixmap(scaled_pixmap)
 
-            # تحديث شريط التقدم إذا كان موجوداً
-            if hasattr(self, 'playback_progress'):
+            if hasattr(self, "playback_progress"):
                 self.playback_progress.setValue(self.frameIdx)
 
-            # زيادة العداد للانتقال للإطار التالي
             self.frameIdx += 1
 
         except AttributeError as e:
             self.timer.stop()
             QMessageBox.warning(
-                self,
-                "Playback Error",
-                f"Missing required attributes: {str(e)}"
+                self, "Playback Error", f"Missing required attributes: {str(e)}"
             )
         except IndexError:
             self.timer.stop()
-            if hasattr(self, '_play_list'):
-                self.frameIdx = 0  # إعادة التعيين عند الوصول لنهاية الفيديو
+            if hasattr(self, "_play_list"):
+                self.frameIdx = 0
         except Exception as e:
             self.timer.stop()
             QMessageBox.critical(
                 self,
                 "Playback Error",
                 f"Error displaying frame {self.frameIdx}:\n{str(e)}\n\n"
-                f"Frame size: {current_frame.shape if 'current_frame' in locals() else 'N/A'}"
+                f"Frame size: {current_frame.shape if 'current_frame' in locals() else 'N/A'}",
             )
 
     def preview_original(self):
@@ -634,52 +583,40 @@ class MainWindow(QMainWindow):
         self.timer.start(int(1000 / self.vp.fps))
 
     def save_video(self):
-        # التحقق من وجود فيديو معالج أولاً
-        if not hasattr(self.vp, 'decoded') or not self.vp.decoded:
+        if not hasattr(self.vp, "decoded") or not self.vp.decoded:
             QMessageBox.warning(
-                self, 
-                "No Video", 
-                "Please load and process a video first before saving."
+                self, "No Video", "Please load and process a video first before saving."
             )
             return
 
-        # عرض مربع حوار الحفظ مع خيارات الصيغ
         path, selected_filter = QFileDialog.getSaveFileName(
-            self, 
+            self,
             "Save Compressed Video",
             "",
-            "MP4 Video (*.mp4);;AVI Video (*.avi);;All Files (*)"
+            "MP4 Video (*.mp4);;AVI Video (*.avi);;All Files (*)",
         )
-        
+
         if not path:
             return
-        
-        try:
-            # تحديد الكودك بناء على الامتداد المختار
-            if selected_filter.startswith("MP4"):
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                if not path.endswith('.mp4'):
-                    path += '.mp4'
-            else:  # AVI كبديل
-                fourcc = cv2.VideoWriter_fourcc(*'XVID')
-                if not path.endswith('.avi'):
-                    path += '.avi'
 
-            # إعداد كاتب الفيديو مع التحقق من نجاح الإعداد
-            out = cv2.VideoWriter(
-                path,
-                fourcc,
-                self.vp.fps,
-                self.vp.frame_size
-            )
-            
+        try:
+            if selected_filter.startswith("MP4"):
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                if not path.endswith(".mp4"):
+                    path += ".mp4"
+            else:
+                fourcc = cv2.VideoWriter_fourcc(*"XVID")
+                if not path.endswith(".avi"):
+                    path += ".avi"
+
+            out = cv2.VideoWriter(path, fourcc, self.vp.fps, self.vp.frame_size)
+
             if not out.isOpened():
                 raise IOError("Could not create video file. Check codec support.")
 
-            # كتابة الإطارات
             for frame in self.vp.decoded:
                 out.write(frame)
-            
+
             out.release()
 
             QMessageBox.information(
@@ -689,9 +626,9 @@ class MainWindow(QMainWindow):
                 f"Location: {path}\n"
                 f"Size: {os.path.getsize(path)//1024} KB\n"
                 f"Frames: {len(self.vp.decoded)}\n"
-                f"Resolution: {self.vp.frame_size[0]}x{self.vp.frame_size[1]}"
+                f"Resolution: {self.vp.frame_size[0]}x{self.vp.frame_size[1]}",
             )
-            
+
         except Exception as e:
             QMessageBox.critical(
                 self,
@@ -700,7 +637,7 @@ class MainWindow(QMainWindow):
                 "Possible reasons:\n"
                 "- Unsupported codec\n"
                 "- Invalid file path\n"
-                "- Disk full or write permissions"
+                "- Disk full or write permissions",
             )
 
     def save_bs(self):
@@ -719,7 +656,6 @@ class MainWindow(QMainWindow):
         if not folder:
             return
 
-        # Debugging: Print the selected folder path
         print(f"Selected folder: {folder}")
 
         if not os.path.exists(folder):
@@ -745,14 +681,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Video Creation Failed", str(e))
 
 
-# Apply the styles to QMessageBox globally
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
-    # Set application-wide font
     app.setFont(QApplication.font("QApplication"))
 
-    # Style QMessageBox
     app.setStyleSheet(
         """
     QMessageBox {
