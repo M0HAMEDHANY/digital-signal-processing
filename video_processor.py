@@ -31,6 +31,7 @@ o Measure compression ratio and PSNR (Peak Signal-to-Noise Ratio).
 
 """
 
+# Updated video_processor.py with DCT, quantization, zig-zag scan (I-frames) and motion estimation (P-frames)
 import cv2
 import numpy as np
 import pickle
@@ -38,243 +39,213 @@ import zlib
 import os
 
 
+def blockify(img, block_size=8):
+    h, w = img.shape
+    return img.reshape(h // block_size, block_size, -1, block_size).swapaxes(1, 2).reshape(-1, block_size, block_size)
+
+def unblockify(blocks, h, w, block_size=8):
+    blocks = blocks.reshape(h // block_size, w // block_size, block_size, block_size).swapaxes(1, 2)
+    return blocks.reshape(h, w)
+
+def quantize(blocks, q=10):
+    return np.round(blocks / q).astype(np.int16)
+
+def dequantize(blocks, q=10):
+    return (blocks * q).astype(np.float32)
+
+def dct2(block):
+    return cv2.dct(block.astype(np.float32))
+
+def idct2(block):
+    return cv2.idct(block.astype(np.float32))
+
+def zigzag(block):
+    index_order = sorted(((x, y) for x in range(8) for y in range(8)), key=lambda s: s[0]+s[1] if (s[0]+s[1]) % 2 == 0 else -s[0])
+    return np.array([block[i, j] for i, j in index_order])
+
+def izigzag(array):
+    index_order = sorted(((x, y) for x in range(8) for y in range(8)), key=lambda s: s[0]+s[1] if (s[0]+s[1]) % 2 == 0 else -s[0])
+    block = np.zeros((8, 8), dtype=array.dtype)
+    for val, (i, j) in zip(array, index_order):
+        block[i, j] = val
+    return block
+
+
+def motion_estimate(ref, target, block_size=8, search_range=4):
+    h, w = ref.shape
+    mv = []
+    residuals = []
+    for i in range(0, h, block_size):
+        for j in range(0, w, block_size):
+            best_match = (0, 0)
+            min_error = float('inf')
+            block = target[i:i+block_size, j:j+block_size]
+            for dy in range(-search_range, search_range + 1):
+                for dx in range(-search_range, search_range + 1):
+                    y, x = i + dy, j + dx
+                    if y < 0 or x < 0 or y + block_size > h or x + block_size > w:
+                        continue
+                    ref_block = ref[y:y+block_size, x:x+block_size]
+                    error = np.sum(np.abs(ref_block - block))
+                    if error < min_error:
+                        min_error = error
+                        best_match = (dy, dx)
+            dy, dx = best_match
+            y, x = i + dy, j + dx
+            ref_block = ref[y:y+block_size, x:x+block_size]
+            residual = block - ref_block
+            mv.append((dy, dx))
+            residuals.append(residual)
+    return mv, residuals
+
+
+def motion_compensate(ref, mv, residuals, block_size=8):
+    h, w = ref.shape
+    rec = np.zeros_like(ref)
+    idx = 0
+    for i in range(0, h, block_size):
+        for j in range(0, w, block_size):
+            dy, dx = mv[idx]
+            y, x = i + dy, j + dx
+            ref_block = ref[y:y+block_size, x:x+block_size]
+            rec[i:i+block_size, j:j+block_size] = ref_block + residuals[idx]
+            idx += 1
+    return rec
+
+
 class VideoProcessor:
     def __init__(self):
         self.frames = []
+        self.frames_yuv = []
         self.decoded = []
         self.compressed_data = None
-        self.fps = 30  # Default FPS
+        self.fps = 30
         self.frame_size = (0, 0)
         self.metadata = {}
         self.ratio = None
         self.psnr = None
 
     def load(self, path):
-        """Load a video file and extract frames."""
-        if not os.path.exists(path):
-            raise ValueError(f"Video file does not exist: {path}")
-
         cap = cv2.VideoCapture(path)
-        if not cap.isOpened():
-            raise ValueError(f"Cannot open video file: {path}")
-
-        self.frames = []
         self.fps = cap.get(cv2.CAP_PROP_FPS) or self.fps
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
-            if frame is None:
-                continue  # Skip invalid frames
             self.frames.append(frame)
-
-        if not self.frames:
-            cap.release()
-            raise ValueError("No frames loaded from video")
-
-        self.frame_size = (
-            self.frames[0].shape[1],
-            self.frames[0].shape[0],
-        )  # Width, Height
+            yuv = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV)
+            self.frames_yuv.append(yuv)
         cap.release()
+        self.frame_size = (self.frames[0].shape[1], self.frames[0].shape[0])
 
-    def compress(self, gop=1, q=50, encoding_method="quantization"):
-        """Compress video frames using the specified method."""
-        if not self.frames:
-            raise ValueError("No frames to compress")
-
+    def compress(self, gop=10, q=10, encoding_method="intra"):
         if encoding_method.lower() == "intra":
-            self.compress_intra(gop, q)
+            self.compress_intra(q)
         elif encoding_method.lower() == "pframe":
             self.compress_inter(gop, q)
-        else:
-            self.compress_quantization(gop, q)
 
-    def compress_inter(self, gop=10, q=50):
-        """Compress video using I-frames and P-frames with OpenCV."""
-        # Create a temporary file for compression
-        temp_file = "temp_compressed.avi"
+        self.decoded = self.convert_yuv_to_bgr(self.decoded)
+        self.ratio = self._compression_ratio()
+        self.psnr = self.calculate_psnr(self.frames_yuv, self.decoded)
 
-        # Use OpenCV's VideoWriter for compression
-        fourcc = cv2.VideoWriter_fourcc(*"MJPG")  # MJPEG codec
-        out = cv2.VideoWriter(
-            temp_file, fourcc, self.fps, self.frame_size, isColor=True
-        )
+    def compress_intra(self, q):
+        compressed = []
+        for frame in self.frames_yuv:
+            y = frame[:, :, 0]
+            h, w = y.shape
+            blocks = blockify(y)
+            dct_blocks = np.array([dct2(b) for b in blocks])
+            q_blocks = quantize(dct_blocks, q)
+            zz_blocks = np.array([zigzag(b) for b in q_blocks])
+            compressed.append(zz_blocks)
 
-        # Write frames with specified quality
-        for frame in self.frames:
-            # OpenCV's compression quality is set via imwrite parameters
-            # For MJPG, quality ranges from 0-100
-            encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), q]
-            _, encoded_frame = cv2.imencode(".jpg", frame, encode_params)
-            decoded_frame = cv2.imdecode(encoded_frame, cv2.IMREAD_COLOR)
-            out.write(decoded_frame)
-
-        out.release()
-
-        # Read back the compressed file
-        with open(temp_file, "rb") as f:
-            self.compressed_data = f.read()
-
-        # Clean up temp file
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
-
-        # Metadata
-        self.metadata = {
-            "frame_size": self.frame_size,
-            "fps": self.fps,
-            "q_factor": q,
-            "encoding_method": "pframe",
-            "gop": gop,
-        }
-
-        # Decompress for analysis
-        self.decompress()
-
-        # Calculate compression ratio
-        original_size = sum(f.nbytes for f in self.frames)
-        compressed_size = len(self.compressed_data)
-        self.ratio = (
-            original_size / compressed_size if compressed_size > 0 else float("inf")
-        )
-
-        # Calculate PSNR
-        self.psnr = self.calculate_psnr(self.frames, self.decoded)
-
-    def compress_quantization(self, gop=1, q=8):
-        """Use OpenCV's built-in quantization."""
-        # Convert q to quality factor (higher q = lower quality)
-        quality = min(100, max(1, int(100 - (q * 10))))
-
-        # Compress each frame using JPEG with specified quality
-        compressed_frames = []
-        for frame in self.frames:
-            # JPEG compression with specified quality
-            encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-            _, encoded_frame = cv2.imencode(".jpg", frame, encode_params)
-            compressed_frames.append(encoded_frame)
-
-        # Store metadata
-        self.metadata = {
-            "bits": q,
-            "frame_size": self.frame_size,
-            "fps": self.fps,
-            "encoding_method": "quantization",
-        }
-
-        # Serialize and compress data
-        serialized = pickle.dumps(compressed_frames)
+        serialized = pickle.dumps({"type": "intra", "data": compressed})
         self.compressed_data = zlib.compress(serialized)
 
-        # Decompress for analysis
-        self.decompress()
+        # Decompress
+        raw = zlib.decompress(self.compressed_data)
+        decoded_blocks = pickle.loads(raw)["data"]
+        self.decoded = []
+        for zz_blocks, frame in zip(decoded_blocks, self.frames_yuv):
+            blocks = np.array([izigzag(b) for b in zz_blocks])
+            dq_blocks = dequantize(blocks, q)
+            idct_blocks = np.array([idct2(b) for b in dq_blocks])
+            y_rec = unblockify(idct_blocks, frame.shape[0], frame.shape[1])
+            rec = np.stack([y_rec, frame[:, :, 1], frame[:, :, 2]], axis=2)
+            self.decoded.append(rec.astype(np.uint8))
 
-        # Calculate compression ratio
-        original_size = sum(f.nbytes for f in self.frames)
-        compressed_size = len(self.compressed_data)
-        self.ratio = (
-            original_size / compressed_size if compressed_size > 0 else float("inf")
-        )
+    def compress_inter(self, gop, q):
+        compressed = []
+        ref = self.frames_yuv[0][:, :, 0]
+        h, w = ref.shape
 
-        # Calculate PSNR
-        self.psnr = self.calculate_psnr(self.frames, self.decoded)
+        # Intra compress first frame
+        blocks = blockify(ref)
+        dct_blocks = np.array([dct2(b) for b in blocks])
+        q_blocks = quantize(dct_blocks, q)
+        zz_blocks = np.array([zigzag(b) for b in q_blocks])
+        compressed.append(("I", zz_blocks))
 
-    def compress_intra(self, gop=1, q=50):
-        """Use OpenCV's built-in JPEG compression for intra-frame encoding."""
-        # Quality in OpenCV ranges from 0-100 (higher is better)
-        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), q]
+        for i in range(1, len(self.frames_yuv)):
+            y = self.frames_yuv[i][:, :, 0]
+            mv, res = motion_estimate(ref, y)
+            res_dct = [dct2(r) for r in res]
+            q_res = [quantize(b, q) for b in res_dct]
+            zz_res = [zigzag(b) for b in q_res]
+            compressed.append(("P", mv, zz_res))
+            ref = y
 
-        compressed_frames = []
-        for frame in self.frames:
-            # Encode to JPEG format
-            _, encoded_frame = cv2.imencode(".jpg", frame, encode_params)
-            compressed_frames.append(encoded_frame)
-
-        # Store metadata
-        self.metadata = {
-            "q_factor": q,
-            "frame_size": self.frame_size,
-            "fps": self.fps,
-            "encoding_method": "intra",
-        }
-
-        # Serialize and compress
-        serialized = pickle.dumps(compressed_frames)
+        serialized = pickle.dumps({"type": "inter", "data": compressed})
         self.compressed_data = zlib.compress(serialized)
 
-        # Decompress for analysis
-        self.decompress()
+        # Decompress
+        raw = zlib.decompress(self.compressed_data)
+        data = pickle.loads(raw)["data"]
+        self.decoded = []
+        ref = None
 
-        # Calculate compression ratio
-        original_size = sum(f.nbytes for f in self.frames)
-        compressed_size = len(self.compressed_data)
-        self.ratio = (
-            original_size / compressed_size if compressed_size > 0 else float("inf")
-        )
+        for item, frame in zip(data, self.frames_yuv):
+            if item[0] == "I":
+                zz_blocks = item[1]
+                blocks = np.array([izigzag(b) for b in zz_blocks])
+                dq_blocks = dequantize(blocks, q)
+                idct_blocks = np.array([idct2(b) for b in dq_blocks])
+                y_rec = unblockify(idct_blocks, frame.shape[0], frame.shape[1])
+                ref = y_rec.copy()
+            else:
+                mv, zz_res = item[1], item[2]
+                res_blocks = [izigzag(b) for b in zz_res]
+                dq_res = [dequantize(b, q) for b in res_blocks]
+                res_idct = [idct2(b) for b in dq_res]
+                y_rec = motion_compensate(ref, mv, res_idct)
+                ref = y_rec.copy()
 
-        # Calculate PSNR
-        self.psnr = self.calculate_psnr(self.frames, self.decoded)
+            rec = np.stack([ref, frame[:, :, 1], frame[:, :, 2]], axis=2)
+            self.decoded.append(rec.astype(np.uint8))
 
-    def decompress(self):
-        """Decompress using OpenCV's built-in functions."""
-        if not self.compressed_data:
-            raise ValueError("No compressed data available")
+    def convert_yuv_to_bgr(self, yuv_frames):
+        return [cv2.cvtColor(f, cv2.COLOR_YUV2BGR) for f in yuv_frames]
 
-        try:
-            decompressed = zlib.decompress(self.compressed_data)
-            compressed_frames = pickle.loads(decompressed)
+    def calculate_psnr(self, originals, recs):
+        psnr_vals = []
+        for o, r in zip(originals, recs):
+            o_bgr = cv2.cvtColor(o, cv2.COLOR_YUV2BGR)
+            psnr_vals.append(cv2.PSNR(o_bgr, r))
+        return np.mean(psnr_vals)
 
-            encoding_method = self.metadata.get("encoding_method", "quantization")
-
-            self.decoded = []
-            for compressed in compressed_frames:
-                # Use OpenCV's imdecode function to decompress
-                frame = cv2.imdecode(compressed, cv2.IMREAD_COLOR)
-                self.decoded.append(frame)
-
-        except (zlib.error, pickle.PickleError) as e:
-            raise ValueError(f"Decompression failed: {str(e)}")
-
-    def calculate_psnr(self, original_frames, compressed_frames):
-        """Calculate PSNR between original and compressed frames using OpenCV."""
-        if len(original_frames) != len(compressed_frames):
-            raise ValueError("Mismatch in number of original and compressed frames")
-
-        psnr_values = []
-        for orig, comp in zip(original_frames, compressed_frames):
-            # Ensure same shape and type
-            if orig.shape != comp.shape:
-                comp = cv2.resize(comp, (orig.shape[1], orig.shape[0]))
-
-            # Use OpenCV's built-in PSNR calculation
-            psnr = cv2.PSNR(orig, comp)
-            psnr_values.append(psnr)
-
-        return np.mean(psnr_values) if psnr_values else 0.0
+    def _compression_ratio(self):
+        orig_size = sum(f.nbytes for f in self.frames_yuv)
+        comp_size = len(self.compressed_data)
+        return orig_size / comp_size if comp_size > 0 else float("inf")
 
     def save_video(self, path):
-        """Save the decoded video to a file using OpenCV's VideoWriter."""
-        if not self.decoded:
-            raise ValueError("No decoded video available")
-
-        fourcc = cv2.VideoWriter_fourcc(*"XVID")
-        out = cv2.VideoWriter(
-            path,
-            fourcc,
-            self.fps,
-            self.frame_size,
-            isColor=(len(self.decoded[0].shape) > 2 and self.decoded[0].shape[2] == 3),
-        )
-
-        for frame in self.decoded:
-            out.write(frame)
+        bgr_frames = self.convert_yuv_to_bgr(self.decoded)
+        out = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"XVID"), self.fps, self.frame_size)
+        for f in bgr_frames:
+            out.write(f)
         out.release()
 
     def save_bitstream(self, path):
-        """Save the compressed bitstream to a file."""
-        if not self.compressed_data:
-            raise ValueError("No compressed data available")
-
         with open(path, "wb") as f:
             f.write(self.compressed_data)
+        np.savez(path + ".metadata", metadata=self.metadata, fps=self.fps, frame_size=self.frame_size)

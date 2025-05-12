@@ -296,7 +296,7 @@ class MainWindow(QMainWindow):
             lambda: self.qValueLabel.setText(str(self.qSlider.value()))
         )
         self.encVCombo = QComboBox()
-        self.encVCombo.addItems(["Intra", "P-frame"])
+        self.encVCombo.addItems(["Huffman", "Arithmetic", "Intra", "P-frame"])
 
         self.frameLbl = QLabel()
         self.frameLbl.setFixedHeight(360)

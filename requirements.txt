@@ -8,3 +8,5 @@ soundfile
 pyaudio
 huffman
 opencv-python
+pickle
+zlib
