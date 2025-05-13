@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QHBoxLayout,
     QGroupBox,
-    QProgressDialog,
+    QProgressDialog ,
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QPalette, QColor
@@ -363,10 +363,8 @@ class MainWindow(QMainWindow):
 
     def plot_clean(self):
         try:
-            # Map slider value (0–100) to 0.0–1.0
-            threshold = self.noiseSlider.value() / 1000.0
-            clean = self.ap.denoise(prop_decrease=threshold)
-
+            threshold = self.noiseSlider.value()
+            clean = self.ap.denoise(threshold)
             self.last_audio = clean.astype(np.float32)
             self._plot(self.cleanCan, self.ap.time, clean, "Cleaned Signal")
         except Exception as e:

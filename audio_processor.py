@@ -23,7 +23,6 @@ import numpy as np
 import soundfile as sf
 import librosa
 import pyaudio
-import noisereduce as nr
 import threading
 from scipy.signal import stft, istft
 import zlib
@@ -76,19 +75,31 @@ class AudioProcessor:
             self._play_thread.join(timeout=0.5)
             self._play_thread = None
 
-    def denoise(self, prop_decrease=1.0):
+    def denoise(self, threshold: float) -> np.ndarray:
         if self.signal is None:
             raise ValueError("Load audio first")
+        
+        n_fft = 2048
+        hop_length = n_fft // 4
+        
+        S = librosa.stft(self.signal, n_fft=n_fft, hop_length=hop_length)
+        
+        mag = np.abs(S)
+        phase = np.angle(S)
+        
+        noise_frames = int(len(self.signal) * 0.1 / hop_length)
+        noise_frames = max(5, min(noise_frames, 20))
+        noise_estimate = np.mean(mag[:, :noise_frames], axis=1)
+        
+        gain = np.maximum(0, 1 - threshold * noise_estimate[:, np.newaxis] / (mag + 1e-10))
+        mag_clean = mag * gain
+        
 
-        noise_clip = self.signal[: int(0.5 * self.fs)]
-
-        reduced = nr.reduce_noise(
-            y=self.signal, sr=self.fs, y_noise=noise_clip, prop_decrease=prop_decrease
-        )
-
-        self.reconstructed = reduced.astype(np.float32)
-        return reduced
-
+        S_clean = mag_clean * np.exp(1j * phase)
+        clean = librosa.istft(S_clean, hop_length=hop_length, length=len(self.signal))
+        self.reconstructed = clean.astype(np.float32)
+        return clean
+        
     def compress(self, win_size, bits, method):
         self.win_size = win_size
         self.bits = bits
