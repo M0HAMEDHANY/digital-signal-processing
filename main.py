@@ -32,7 +32,13 @@ from create_video import CreateVideo
 
 
 class MainWindow(QMainWindow):
+    """
+    Main application window that provides a tabbed interface for audio and video compression.
+    Contains UI elements and logic for processing multimedia content.
+    """
+
     def __init__(self):
+        """Initialize the main application window with styling and tabs"""
         super().__init__()
         self.setWindowTitle("Multimedia Compression Suite")
         self.resize(1000, 800)
@@ -43,13 +49,17 @@ class MainWindow(QMainWindow):
         # Track last processed audio buffer (denoised or reconstructed)
         self.last_audio = None
 
+        # Create tabbed interface
         tabs = QTabWidget()
         tabs.addTab(self.build_audio_tab(), "Audio")
         tabs.addTab(self.build_video_tab(), "Video")
         self.setCentralWidget(tabs)
 
     def apply_styles(self):
-        """Apply stylesheet to the application"""
+        """
+        Apply stylesheet to the application for consistent and attractive UI.
+        Sets colors, borders, paddings and other visual elements.
+        """
         stylesheet = """
         QMainWindow {
             background-color: #f0f0f0;
@@ -168,6 +178,12 @@ class MainWindow(QMainWindow):
                 canvas.figure.tight_layout(pad=3.0)
 
     def build_audio_tab(self):
+        """
+        Create and configure the audio processing tab with controls and visualizations.
+
+        Returns:
+            QWidget: The configured audio tab widget
+        """
         w = QWidget()
         layout = QVBoxLayout(w)
 
@@ -175,6 +191,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
         layout.setContentsMargins(15, 15, 15, 15)
 
+        # Initialize audio processor
         self.ap = AudioProcessor()
 
         # Buttons and controls
@@ -191,6 +208,7 @@ class MainWindow(QMainWindow):
         btn_save = QPushButton("Save")
         btn_save.clicked.connect(self.save_audio)
 
+        # Window size slider for FFT
         self.winSlider = QSlider(Qt.Horizontal)
         self.winSlider.setRange(256, 4096)
         self.winSlider.setValue(1024)
@@ -199,12 +217,13 @@ class MainWindow(QMainWindow):
             lambda: self.winValueLabel.setText(str(self.winSlider.value()))
         )
 
+        # Bit depth and encoding options
         self.bitsCombo = QComboBox()
         self.bitsCombo.addItems(["4", "8", "16"])
         self.encCombo = QComboBox()
         self.encCombo.addItems(["Huffman"])
 
-        # Noise threshold controls
+        # Noise threshold controls for denoising
         self.noiseSlider = QSlider(Qt.Horizontal)
         self.noiseSlider.setRange(100, 1000)
         self.noiseSlider.setValue(10)
@@ -216,7 +235,7 @@ class MainWindow(QMainWindow):
         btn_clean = QPushButton("Plot Clean Signal")
         btn_clean.clicked.connect(self.plot_clean)
 
-        # Canvases
+        # Matplotlib canvases for signal visualization
         self.origCan = FigureCanvas(Figure(figsize=(5, 2)))
         self.cleanCan = FigureCanvas(Figure(figsize=(5, 2)))
         self.procCan = FigureCanvas(Figure(figsize=(5, 2)))
@@ -257,6 +276,12 @@ class MainWindow(QMainWindow):
         return w
 
     def build_video_tab(self):
+        """
+        Create and configure the video processing tab with controls and preview area.
+
+        Returns:
+            QWidget: The configured video tab widget
+        """
         w = QWidget()
         layout = QVBoxLayout(w)
 
@@ -264,8 +289,10 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
         layout.setContentsMargins(15, 15, 15, 15)
 
+        # Initialize video processor
         self.vp = VideoProcessor()
 
+        # Button controls for video operations
         btn_load = QPushButton("Load Video")
         btn_load.clicked.connect(self.load_video)
         btn_run = QPushButton("Run Compression")
@@ -281,6 +308,7 @@ class MainWindow(QMainWindow):
         btn_create_vid = QPushButton("Create Video from Frames")
         btn_create_vid.clicked.connect(self.create_from_frames)
 
+        # GOP (Group of Pictures) slider for video compression
         self.gopSlider = QSlider(Qt.Horizontal)
         self.gopSlider.setRange(1, 30)
         self.gopSlider.setValue(10)
@@ -289,6 +317,7 @@ class MainWindow(QMainWindow):
             lambda: self.gopValueLabel.setText(str(self.gopSlider.value()))
         )
 
+        # Quality factor slider for compression
         self.qSlider = QSlider(Qt.Horizontal)
         self.qSlider.setRange(1, 100)
         self.qSlider.setValue(20)
@@ -296,9 +325,12 @@ class MainWindow(QMainWindow):
         self.qSlider.valueChanged.connect(
             lambda: self.qValueLabel.setText(str(self.qSlider.value()))
         )
+
+        # Encoding methods dropdown
         self.encVCombo = QComboBox()
         self.encVCombo.addItems(["Huffman", "Arithmetic", "Intra", "P-frame"])
 
+        # Video frame display area
         self.frameLbl = QLabel()
         self.frameLbl.setFixedHeight(360)
         self.frameIdx = 0
@@ -343,6 +375,10 @@ class MainWindow(QMainWindow):
     # --- Audio methods ---
 
     def load_audio(self):
+        """
+        Open a file dialog to select and load an audio file.
+        Displays the audio waveform and updates the window title.
+        """
         path, _ = QFileDialog.getOpenFileName(
             self, "Open Audio", "", "Audio (*.wav *.flac *.mp3 *.m4a)"
         )
@@ -360,6 +396,10 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Load Error", str(e))
 
     def plot_clean(self):
+        """
+        Apply denoising to the loaded audio signal and display the cleaned signal.
+        Uses the noise threshold from the slider.
+        """
         try:
             threshold = self.noiseSlider.value()
             clean = self.ap.denoise(threshold)
@@ -369,6 +409,10 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", str(e))
 
     def run_audio(self):
+        """
+        Compress the audio using the selected parameters (window size, bit depth, encoding).
+        Displays the reconstructed signal and SNR after compression.
+        """
         try:
             self.ap.compress(
                 self.winSlider.value(),
@@ -389,12 +433,14 @@ class MainWindow(QMainWindow):
         )
 
     def stop_audio(self):
+        """Stop any currently playing audio."""
         if self.ap is not None:
             self.ap.stop()
         else:
             QMessageBox.warning(self, "No Audio", "No audio is currently playing.")
 
     def play_last(self):
+        """Play the last processed audio buffer (denoised or reconstructed)."""
         if self.last_audio is None:
             QMessageBox.warning(
                 self, "No Processed Audio", "Run compression or clean first."
@@ -403,6 +449,10 @@ class MainWindow(QMainWindow):
             self.ap.play(self.last_audio)
 
     def save_audio(self):
+        """
+        Save the processed audio to a file.
+        Opens a file dialog to choose save location.
+        """
         if hasattr(self.ap, "filename") and self.ap.filename:
             path = QFileDialog.getExistingDirectory(self, "Select Directory to Save")
             if not path:
@@ -427,6 +477,15 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Save Error", str(e))
 
     def _plot(self, canvas, x, y, title):
+        """
+        Plot signal data on the specified matplotlib canvas.
+
+        Args:
+            canvas: The FigureCanvas to plot on
+            x: X-axis data (typically time)
+            y: Y-axis data (signal amplitude)
+            title: Plot title to display
+        """
         canvas.figure.clf()
         ax = canvas.figure.add_subplot(111)
         ax.set_title(title, fontweight="bold", fontsize=12)
@@ -451,6 +510,10 @@ class MainWindow(QMainWindow):
     # --- Video methods ---
 
     def load_video(self):
+        """
+        Open a file dialog to select and load a video file.
+        Initializes the video processor and displays information about the loaded video.
+        """
         path, _ = QFileDialog.getOpenFileName(
             self, "Open Video", "", "Video Files (*.mp4 *.avi *.mov);;All Files (*)"
         )
@@ -493,6 +556,10 @@ class MainWindow(QMainWindow):
             )
 
     def run_video(self):
+        """
+        Compress the video using the selected parameters (GOP size, quality, encoding).
+        Displays compression metrics (PSNR and ratio) after processing.
+        """
         try:
             encoding_method = self.encVCombo.currentText().lower().replace("-", "")
             self.vp.compress(
@@ -505,6 +572,11 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", str(e))
 
     def _show_frame(self):
+        """
+        Display a single frame from the current video playlist.
+        Called by the timer to animate video playback.
+        Handles format conversion and scaling for display.
+        """
         try:
             # Check if we have a valid playlist
             if not hasattr(self, "_play_list") or not self._play_list:
@@ -573,6 +645,7 @@ class MainWindow(QMainWindow):
             )
 
     def preview_original(self):
+        """Preview the original unprocessed video frames."""
         if not self.vp.frames:
             QMessageBox.warning(self, "No Video", "Load a video first.")
             return
@@ -581,6 +654,7 @@ class MainWindow(QMainWindow):
         self.timer.start(int(1000 / self.vp.fps))
 
     def preview_decoded(self):
+        """Preview the decoded (compressed/decompressed) video frames."""
         if not self.vp.decoded:
             QMessageBox.warning(self, "No Decoded Video", "Run compression first.")
             return
@@ -589,6 +663,10 @@ class MainWindow(QMainWindow):
         self.timer.start(int(1000 / self.vp.fps))
 
     def save_video(self):
+        """
+        Save the processed video to a file.
+        Supports MP4 and AVI formats with appropriate codecs.
+        """
         if not hasattr(self.vp, "decoded") or not self.vp.decoded:
             QMessageBox.warning(
                 self, "No Video", "Please load and process a video first before saving."
@@ -647,6 +725,10 @@ class MainWindow(QMainWindow):
             )
 
     def save_bs(self):
+        """
+        Save the compressed video bitstream to a file.
+        Useful for later decompression or analysis.
+        """
         path, _ = QFileDialog.getSaveFileName(self, "Save Bitstream", "", "NPZ (*.npz)")
         if not path:
             return
@@ -657,6 +739,10 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", str(e))
 
     def create_from_frames(self):
+        """
+        Create a video from a folder of image frames.
+        Opens dialogs to select the source folder and output file.
+        """
         folder = QFileDialog.getExistingDirectory(self, "Select Frame Folder")
 
         if not folder:
@@ -688,8 +774,10 @@ class MainWindow(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
+    # Set application-wide font
     app.setFont(QApplication.font("QApplication"))
 
+    # Apply styling to QMessageBox globally
     app.setStyleSheet(
         """
     QMessageBox {
@@ -713,6 +801,7 @@ if __name__ == "__main__":
     """
     )
 
+    # Create and display the main window
     win = MainWindow()
     win.show()
     sys.exit(app.exec_())
