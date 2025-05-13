@@ -194,7 +194,7 @@ class MainWindow(QMainWindow):
         self.winSlider = QSlider(Qt.Horizontal)
         self.winSlider.setRange(256, 4096)
         self.winSlider.setValue(1024)
-        self.winValueLabel = QLabel("1024") 
+        self.winValueLabel = QLabel("1024")
         self.winSlider.valueChanged.connect(
             lambda: self.winValueLabel.setText(str(self.winSlider.value()))
         )
@@ -208,7 +208,7 @@ class MainWindow(QMainWindow):
         self.noiseSlider = QSlider(Qt.Horizontal)
         self.noiseSlider.setRange(100, 1000)
         self.noiseSlider.setValue(10)
-        self.noiseValueLabel = QLabel("10") 
+        self.noiseValueLabel = QLabel("10")
         self.noiseSlider.valueChanged.connect(
             lambda: self.noiseValueLabel.setText(str(self.noiseSlider.value()))
         )
@@ -228,7 +228,7 @@ class MainWindow(QMainWindow):
             btn_run,
             QLabel("Win:"),
             self.winSlider,
-            self.winValueLabel,  
+            self.winValueLabel,
             QLabel("Bits:"),
             self.bitsCombo,
             QLabel("Enc:"),
@@ -242,7 +242,7 @@ class MainWindow(QMainWindow):
         hl2 = QHBoxLayout()
         hl2.addWidget(QLabel("Noise Threshold %:"))
         hl2.addWidget(self.noiseSlider)
-        hl2.addWidget(self.noiseValueLabel)  
+        hl2.addWidget(self.noiseValueLabel)
         hl2.addWidget(btn_clean)
         layout.addLayout(hl2)
 
@@ -284,7 +284,7 @@ class MainWindow(QMainWindow):
         self.gopSlider = QSlider(Qt.Horizontal)
         self.gopSlider.setRange(1, 30)
         self.gopSlider.setValue(10)
-        self.gopValueLabel = QLabel("10") 
+        self.gopValueLabel = QLabel("10")
         self.gopSlider.valueChanged.connect(
             lambda: self.gopValueLabel.setText(str(self.gopSlider.value()))
         )
@@ -292,12 +292,12 @@ class MainWindow(QMainWindow):
         self.qSlider = QSlider(Qt.Horizontal)
         self.qSlider.setRange(1, 100)
         self.qSlider.setValue(20)
-        self.qValueLabel = QLabel("20")  
+        self.qValueLabel = QLabel("20")
         self.qSlider.valueChanged.connect(
             lambda: self.qValueLabel.setText(str(self.qSlider.value()))
         )
         self.encVCombo = QComboBox()
-        self.encVCombo.addItems(["Intra", "P-frame"])
+        self.encVCombo.addItems(["Huffman", "Arithmetic", "Intra", "P-frame"])
 
         self.frameLbl = QLabel()
         self.frameLbl.setFixedHeight(360)
@@ -352,8 +352,6 @@ class MainWindow(QMainWindow):
             self.ap.load(path)
             self.last_audio = None
             self._plot(self.origCan, self.ap.time, self.ap.signal, "Original Signal")
-
-            import os
 
             filename = os.path.basename(path)
             self.setWindowTitle(f"Multimedia Compression Suite - Audio: {filename}")
@@ -508,10 +506,12 @@ class MainWindow(QMainWindow):
 
     def _show_frame(self):
         try:
+            # Check if we have a valid playlist
             if not hasattr(self, "_play_list") or not self._play_list:
                 self.timer.stop()
                 return
 
+            # Check if we've reached the end of the frames
             if self.frameIdx >= len(self._play_list):
                 self.timer.stop()
                 if hasattr(self, "playback_looping") and self.playback_looping:
@@ -521,8 +521,10 @@ class MainWindow(QMainWindow):
                     self.frameIdx = 0
                     return
 
+            # Get the current frame
             current_frame = self._play_list[self.frameIdx]
 
+            # Convert to proper format if needed
             if len(current_frame.shape) == 2:
                 frame_rgb = cv2.cvtColor(current_frame, cv2.COLOR_GRAY2BGR)
             elif current_frame.shape[2] == 4:
@@ -533,19 +535,23 @@ class MainWindow(QMainWindow):
             h, w, _ = frame_rgb.shape
             bytes_per_line = 3 * w
 
+            # Create QImage and properly scaled pixmap
             q_img = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format_BGR888)
-
             scaled_pixmap = QPixmap.fromImage(q_img).scaled(
                 self.frameLbl.size(),
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation,
             )
 
+            # Display the frame
+            self.frameLbl.setAlignment(Qt.AlignCenter)
             self.frameLbl.setPixmap(scaled_pixmap)
 
+            # Update progress if available
             if hasattr(self, "playback_progress"):
                 self.playback_progress.setValue(self.frameIdx)
 
+            # Move to next frame
             self.frameIdx += 1
 
         except AttributeError as e:
@@ -656,8 +662,6 @@ class MainWindow(QMainWindow):
         if not folder:
             return
 
-        print(f"Selected folder: {folder}")
-
         if not os.path.exists(folder):
             QMessageBox.critical(self, "Error", f"Path '{folder}' does not exist.")
             return
@@ -679,7 +683,6 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "Video Creation Failed", str(e))
-
 
 
 if __name__ == "__main__":

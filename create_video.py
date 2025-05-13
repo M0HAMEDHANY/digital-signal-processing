@@ -1,9 +1,10 @@
 import os
 import cv2
 
+
 class CreateVideo:
 
-    def __init__(self, width = 640, height = 360, fps = 30):
+    def __init__(self, width=640, height=360, fps=30):
 
         self.frames = []
         self.fps = fps
@@ -24,13 +25,15 @@ class CreateVideo:
             if image is not None:
                 self.frames.append(image)
 
-    def save_video(self, output_path = 'Video.mp4'):
-        
+    def save_video(self, output_path="Video.mp4"):
+
         if self.frames == []:
             return "No Frames to create the video"
 
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        video_writer = cv2.VideoWriter(output_path, fourcc, self.fps, (self.width, self.height))
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        video_writer = cv2.VideoWriter(
+            output_path, fourcc, self.fps, (self.width, self.height)
+        )
 
         for frame in self.frames:
             video_writer.write(frame)

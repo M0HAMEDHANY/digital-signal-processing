@@ -35,14 +35,14 @@ ENV/
 .DS_Store
 
 # Project specific
-*.wav
-*.mp3
-*.mp4
-*.avi
-*.png
-*.jpg
-*.jpeg
-*.gif
+# *.wav
+# *.mp3
+# *.mp4
+# *.avi
+# *.png
+# *.jpg
+# *.jpeg
+# *.gif
 *.pdf
 *.log
 
