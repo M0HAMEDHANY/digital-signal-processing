@@ -167,7 +167,7 @@ class AudioProcessor:
             # Process data in chunks to allow interruption
             chunk_size = 1024
             data_bytes = data.tobytes()
-            for i in range(0, len(data_bytes), chunk_size * 4):  # *4 because float32 = 4 bytes
+            for i in range(0, len(data_bytes), chunk_size * 4): 
                 if self._stop_signal:
                     break
                 chunk = data_bytes[i:i + chunk_size * 4]
